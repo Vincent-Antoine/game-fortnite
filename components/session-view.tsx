@@ -14,6 +14,10 @@ type PlayerRef = SessionDTO['players'][number]
 export function SessionView({ code }: Props) {
   const [session, setSession] = useState<SessionDTO | null>(null)
   const [error, setError] = useState('')
+  const [toast, setToast] = useState('')
+  const [meUser, setMeUser] = useState<{ name: string } | null>(null)
+  const [joinName, setJoinName] = useState('')
+  const [joinAvatar, setJoinAvatar] = useState('drop')
   const [pending, setPending] = useState('')
   const [newName, setNewName] = useState('')
   const [newAvatar, setNewAvatar] = useState('drop')
@@ -80,6 +84,15 @@ export function SessionView({ code }: Props) {
       .then((data) => {
         if (data?.friends) {
           setFriends(data.friends.filter((row: { status: string }) => row.status === 'accepted'))
+        }
+      })
+      .catch(() => undefined)
+    void fetch('/api/me')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (data?.user) {
+          setMeUser(data.user)
+          setJoinName(data.user.name)
         }
       })
       .catch(() => undefined)
@@ -235,6 +248,105 @@ export function SessionView({ code }: Props) {
       </header>
 
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
+      {toast ? <p className="rounded-2xl bg-rez/15 px-4 py-3 text-sm text-rez">{toast}</p> : null}
+
+      {!session.youPlayerId && session.status === 'open' ? (
+        <section className="rounded-3xl bg-horizon p-5 text-dusk">
+          <p className="font-display text-3xl">REJOINS LA SESSION</p>
+          <p className="mt-1 text-sm opacity-80">Tu vois la soirée, mais tu n’es pas encore dans le squad.</p>
+          {meUser ? (
+            <button
+              className="mt-4 w-full rounded-full bg-dusk py-3 font-semibold text-ink"
+              disabled={pending !== ''}
+              onClick={() =>
+                void run('join', async () => {
+                  const response = await fetch(`/api/sessions/${code}/join`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: meUser.name, avatar: joinAvatar }),
+                  })
+                  const data = await response.json()
+                  if (!response.ok) {
+                    throw new Error(data.error ?? 'Impossible de rejoindre')
+                  }
+                  setSession(data)
+                  setToast('Tu as rejoint la session')
+                })
+              }
+            >
+              Rejoindre avec {meUser.name}
+            </button>
+          ) : (
+            <form
+              className="mt-4 flex flex-col gap-3"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void run('join', async () => {
+                  const response = await fetch(`/api/sessions/${code}/join`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: joinName, avatar: joinAvatar }),
+                  })
+                  const data = await response.json()
+                  if (!response.ok) {
+                    throw new Error(data.error ?? 'Impossible de rejoindre')
+                  }
+                  setSession(data)
+                  setToast('Tu as rejoint la session')
+                })
+              }}
+            >
+              <AvatarPicker value={joinAvatar} onChange={setJoinAvatar} />
+              <input
+                required
+                value={joinName}
+                onChange={(event) => setJoinName(event.target.value)}
+                placeholder="Ton pseudo"
+                className="rounded-full bg-dusk px-4 py-3 text-ink outline-none"
+              />
+              <button className="rounded-full bg-dusk py-3 font-semibold text-ink">Rejoindre</button>
+            </form>
+          )}
+        </section>
+      ) : null}
+
+      {session.youPlayerId ? (
+        <section className="flex items-center gap-4 rounded-3xl bg-panel p-4">
+          <label className="relative shrink-0 cursor-pointer">
+            <PlayerAvatar
+              avatar={session.players.find((player) => player.id === session.youPlayerId)?.avatar ?? 'drop'}
+              photoData={session.players.find((player) => player.id === session.youPlayerId)?.photoData}
+              size={72}
+            />
+            <span className="absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-full bg-horizon text-sm font-bold text-dusk">
+              +
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              className="absolute inset-0 cursor-pointer opacity-0"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (!file || !session.youPlayerId) {
+                  return
+                }
+                void compressPhoto(file).then((photoData) =>
+                  run('photo', () =>
+                    mutate(`/api/sessions/${code}/photo`, {
+                      method: 'POST',
+                      body: JSON.stringify({ playerId: session.youPlayerId, photoData }),
+                    }),
+                  ),
+                )
+              }}
+            />
+          </label>
+          <div>
+            <p className="font-semibold">Ta photo de session</p>
+            <p className="text-sm text-mute">Tape le cercle pour ajouter ou changer ta photo. Elle disparaît à la fin de la soirée.</p>
+          </div>
+        </section>
+      ) : null}
 
       <Scoreboard rows={board} youPlayerId={session.youPlayerId} hasOpenGame={Boolean(openGame)} />
 
@@ -425,6 +537,7 @@ export function SessionView({ code }: Props) {
                     if (!response.ok) {
                       throw new Error(data.error ?? 'Invitation impossible')
                     }
+                    setToast(`Invitation envoyée à ${row.user.name}`)
                   })
                 }
               >

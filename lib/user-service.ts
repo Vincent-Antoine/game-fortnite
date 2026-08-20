@@ -152,6 +152,9 @@ export async function acceptFriend(friendshipId: string) {
     title: `${me.name} a accepté`,
     href: '/amis',
   })
+  await db
+    .delete(notifications)
+    .where(and(eq(notifications.userId, me.id), eq(notifications.type, 'friend'), eq(notifications.href, '/amis')))
   return listFriends()
 }
 
@@ -221,6 +224,18 @@ export async function markNotificationsRead() {
   const me = await requireUser()
   const db = getDb()
   await db.update(notifications).set({ read: true }).where(eq(notifications.userId, me.id))
+}
+
+export async function deleteNotification(id: string) {
+  const me = await requireUser()
+  const db = getDb()
+  await db.delete(notifications).where(and(eq(notifications.id, id), eq(notifications.userId, me.id)))
+}
+
+export async function deleteNotificationsByHref(href: string) {
+  const me = await requireUser()
+  const db = getDb()
+  await db.delete(notifications).where(and(eq(notifications.userId, me.id), eq(notifications.href, href)))
 }
 
 export async function profileStats() {
