@@ -1,10 +1,11 @@
-import { and, desc, eq, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import { ApiError } from '@/lib/errors'
 import { getAuthUser, hashToken, newToken, setUserCookie } from '@/lib/auth'
-import { randomCode } from '@/lib/code'
+import { normalizeCode, randomCode } from '@/lib/code'
 import { getDb } from '@/lib/db'
 import {
   friendships,
+  gamePowers,
   games,
   notifications,
   players,
@@ -247,7 +248,7 @@ export async function profileStats() {
   let won = 0
   let lost = 0
   let gameCount = 0
-  const history: { code: string; wonCents: number; lostCents: number; games: number }[] = []
+  const history: { code: string; wonCents: number; lostCents: number; games: number; isHost: boolean }[] = []
 
   for (const sessionId of sessionIds) {
     const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
@@ -277,6 +278,7 @@ export async function profileStats() {
       wonCents: sessionWon,
       lostCents: sessionLost,
       games: sessionGames.length,
+      isHost: sessionPlayers.some((player) => player.isHost),
     })
   }
 
@@ -292,4 +294,36 @@ export async function profileStats() {
     netLabel: formatCents(won - lost),
     history,
   }
+}
+
+export async function removeSessionFromProfile(code: string) {
+  const me = await requireUser()
+  const db = getDb()
+  const sessionCode = normalizeCode(code)
+  const [session] = await db.select().from(sessions).where(eq(sessions.code, sessionCode)).limit(1)
+  if (!session) {
+    throw new ApiError(404, 'Session introuvable')
+  }
+  const [mine] = await db
+    .select()
+    .from(players)
+    .where(and(eq(players.sessionId, session.id), eq(players.userId, me.id)))
+    .limit(1)
+  if (!mine) {
+    throw new ApiError(403, 'Cette session n’est pas dans ton historique')
+  }
+  if (mine.isHost) {
+    await db.update(games).set({ firstKillPlayerId: null }).where(eq(games.sessionId, session.id))
+    const sessionGames = await db.select({ id: games.id }).from(games).where(eq(games.sessionId, session.id))
+    const gameIds = sessionGames.map((row) => row.id)
+    if (gameIds.length > 0) {
+      await db.delete(transfers).where(inArray(transfers.gameId, gameIds))
+      await db.delete(gamePowers).where(inArray(gamePowers.gameId, gameIds))
+    }
+    await db.delete(notifications).where(eq(notifications.href, `/session/${session.code}`))
+    await db.delete(sessions).where(eq(sessions.id, session.id))
+    return { deletedForEveryone: true }
+  }
+  await db.update(players).set({ userId: null }).where(eq(players.id, mine.id))
+  return { deletedForEveryone: false }
 }

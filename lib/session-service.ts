@@ -21,6 +21,16 @@ function sanitizeName(name: string): string {
   return cleaned
 }
 
+function sanitizePhoto(value: unknown): string | null {
+  if (!value) {
+    return null
+  }
+  if (typeof value !== 'string' || !value.startsWith('data:image/') || value.length > 180000) {
+    throw new ApiError(400, 'Photo trop lourde (max ~100 Ko)')
+  }
+  return value
+}
+
 function clampStat(value: unknown): number {
   const n = Number(value)
   if (!Number.isInteger(n) || n < 0 || n > 99) {
@@ -48,12 +58,14 @@ async function uniqueCode(): Promise<string> {
 export async function createSession(input: {
   name: string
   avatar?: string
+  photoData?: string | null
   stakeCents?: number
   userId?: string | null
 }): Promise<{ dto: SessionDTO; playerId: string; token: string }> {
   const db = getDb()
   const name = sanitizeName(input.name)
   const avatar = sanitizeAvatar(input.avatar)
+  const photoData = sanitizePhoto(input.photoData)
   const stakeCents = input.stakeCents ?? 25
   if (!Number.isInteger(stakeCents) || stakeCents < 1 || stakeCents > 5000) {
     throw new ApiError(400, 'Mise invalide')
@@ -74,6 +86,7 @@ export async function createSession(input: {
       userId: input.userId ?? null,
       name,
       avatar,
+      photoData,
       isHost: true,
       color: colorForIndex(0),
       tokenHash: hashToken(token),
@@ -88,12 +101,14 @@ export async function joinSession(input: {
   code: string
   name: string
   avatar?: string
+  photoData?: string | null
   userId?: string | null
 }): Promise<{ dto: SessionDTO; playerId: string; token: string }> {
   const db = getDb()
   const code = normalizeCode(input.code)
   const name = sanitizeName(input.name)
   const avatar = sanitizeAvatar(input.avatar)
+  const photoData = sanitizePhoto(input.photoData)
   const session = await requireSession(code)
   if (session.status === 'closed') {
     throw new ApiError(409, 'Session clôturée')
@@ -113,7 +128,10 @@ export async function joinSession(input: {
   if (input.userId) {
     const mine = existingPlayers.find((player) => player.userId === input.userId)
     if (mine) {
-      await db.update(players).set({ tokenHash: hashToken(token), avatar }).where(eq(players.id, mine.id))
+      await db
+        .update(players)
+        .set({ tokenHash: hashToken(token), avatar, photoData: photoData ?? mine.photoData })
+        .where(eq(players.id, mine.id))
       const dto = await getSessionDto(session.code, mine.id)
       return { dto, playerId: mine.id, token }
     }
@@ -128,6 +146,7 @@ export async function joinSession(input: {
       .set({
         tokenHash: hashToken(token),
         avatar,
+        photoData: photoData ?? duplicate.photoData,
         userId: input.userId ?? duplicate.userId,
       })
       .where(eq(players.id, duplicate.id))
@@ -146,6 +165,7 @@ export async function joinSession(input: {
       userId: input.userId ?? null,
       name,
       avatar,
+      photoData,
       isHost: false,
       color: colorForIndex(existingPlayers.length),
       tokenHash: hashToken(token),
@@ -157,11 +177,17 @@ export async function joinSession(input: {
   return { dto, playerId: player.id, token }
 }
 
-export async function addPlayer(input: { code: string; name: string; avatar?: string }): Promise<SessionDTO> {
+export async function addPlayer(input: {
+  code: string
+  name: string
+  avatar?: string
+  photoData?: string | null
+}): Promise<SessionDTO> {
   const db = getDb()
   const code = normalizeCode(input.code)
   const name = sanitizeName(input.name)
   const avatar = sanitizeAvatar(input.avatar)
+  const photoData = sanitizePhoto(input.photoData)
   const session = await requireOpenSession(code)
   const existingPlayers = await db
     .select()
@@ -182,6 +208,7 @@ export async function addPlayer(input: { code: string; name: string; avatar?: st
       sessionId: session.id,
       name,
       avatar,
+      photoData,
       isHost: false,
       color: colorForIndex(existingPlayers.length),
       tokenHash: null,
@@ -424,6 +451,17 @@ export async function identifyPlayer(
     return null
   }
   return player.id
+}
+
+export async function identifyPlayerByUser(code: string, userId: string): Promise<string | null> {
+  const db = getDb()
+  const session = await requireSession(code)
+  const [player] = await db
+    .select({ id: players.id })
+    .from(players)
+    .where(and(eq(players.sessionId, session.id), eq(players.userId, userId)))
+    .limit(1)
+  return player?.id ?? null
 }
 
 async function requireSession(code: string) {

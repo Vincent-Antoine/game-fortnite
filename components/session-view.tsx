@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AvatarPicker, PlayerAvatar } from '@/components/avatar'
-import { compressPhoto } from '@/lib/compress-photo'
+import { PhotoPicker } from '@/components/photo-picker'
 import { formatCents } from '@/lib/money'
 import { modifiedPoints } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
@@ -18,15 +18,18 @@ export function SessionView({ code }: Props) {
   const [meUser, setMeUser] = useState<{ name: string } | null>(null)
   const [joinName, setJoinName] = useState('')
   const [joinAvatar, setJoinAvatar] = useState('drop')
+  const [joinPhoto, setJoinPhoto] = useState<string | null>(null)
   const [pending, setPending] = useState('')
   const [newName, setNewName] = useState('')
   const [newAvatar, setNewAvatar] = useState('drop')
+  const [newPhoto, setNewPhoto] = useState<string | null>(null)
   const [friends, setFriends] = useState<{ user: { id: string; name: string }; status: string }[]>([])
   const skipPoll = useRef(0)
   const saveTimer = useRef(0)
   const pendingDeltas = useRef<Record<string, { kills: number; revives: number }>>({})
   const flushTimer = useRef(0)
   const sessionRef = useRef<SessionDTO | null>(null)
+  const scrolledToHistory = useRef(false)
   sessionRef.current = session
 
   const mergeRemote = useCallback((remote: SessionDTO) => {
@@ -98,6 +101,16 @@ export function SessionView({ code }: Props) {
       .catch(() => undefined)
     return () => window.clearInterval(timer)
   }, [load])
+
+  useEffect(() => {
+    if (!session || scrolledToHistory.current || window.location.hash !== '#historique') {
+      return
+    }
+    scrolledToHistory.current = true
+    window.requestAnimationFrame(() => {
+      document.getElementById('historique')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [session])
 
   const names = useMemo(() => {
     const map = new Map<string, PlayerRef>()
@@ -254,8 +267,13 @@ export function SessionView({ code }: Props) {
         <section className="rounded-3xl bg-horizon p-5 text-dusk">
           <p className="font-display text-3xl">REJOINS LA SESSION</p>
           <p className="mt-1 text-sm opacity-80">Tu vois la soirée, mais tu n’es pas encore dans le squad.</p>
+          <div className="mt-4 flex flex-col gap-3 rounded-2xl bg-dusk p-3 text-ink">
+            <AvatarPicker value={joinAvatar} onChange={setJoinAvatar} />
+            <PhotoPicker value={joinPhoto} onChange={setJoinPhoto} />
+          </div>
           {meUser ? (
             <button
+              type="button"
               className="mt-4 w-full rounded-full bg-dusk py-3 font-semibold text-ink"
               disabled={pending !== ''}
               onClick={() =>
@@ -263,7 +281,7 @@ export function SessionView({ code }: Props) {
                   const response = await fetch(`/api/sessions/${code}/join`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: meUser.name, avatar: joinAvatar }),
+                    body: JSON.stringify({ name: meUser.name, avatar: joinAvatar, photoData: joinPhoto }),
                   })
                   const data = await response.json()
                   if (!response.ok) {
@@ -285,7 +303,7 @@ export function SessionView({ code }: Props) {
                   const response = await fetch(`/api/sessions/${code}/join`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: joinName, avatar: joinAvatar }),
+                    body: JSON.stringify({ name: joinName, avatar: joinAvatar, photoData: joinPhoto }),
                   })
                   const data = await response.json()
                   if (!response.ok) {
@@ -296,7 +314,6 @@ export function SessionView({ code }: Props) {
                 })
               }}
             >
-              <AvatarPicker value={joinAvatar} onChange={setJoinAvatar} />
               <input
                 required
                 value={joinName}
@@ -307,44 +324,6 @@ export function SessionView({ code }: Props) {
               <button className="rounded-full bg-dusk py-3 font-semibold text-ink">Rejoindre</button>
             </form>
           )}
-        </section>
-      ) : null}
-
-      {session.youPlayerId ? (
-        <section className="flex items-center gap-4 rounded-3xl bg-panel p-4">
-          <label className="relative shrink-0 cursor-pointer">
-            <PlayerAvatar
-              avatar={session.players.find((player) => player.id === session.youPlayerId)?.avatar ?? 'drop'}
-              photoData={session.players.find((player) => player.id === session.youPlayerId)?.photoData}
-              size={72}
-            />
-            <span className="absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-full bg-horizon text-sm font-bold text-dusk">
-              +
-            </span>
-            <input
-              type="file"
-              accept="image/*"
-              className="absolute inset-0 cursor-pointer opacity-0"
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (!file || !session.youPlayerId) {
-                  return
-                }
-                void compressPhoto(file).then((photoData) =>
-                  run('photo', () =>
-                    mutate(`/api/sessions/${code}/photo`, {
-                      method: 'POST',
-                      body: JSON.stringify({ playerId: session.youPlayerId, photoData }),
-                    }),
-                  ),
-                )
-              }}
-            />
-          </label>
-          <div>
-            <p className="font-semibold">Ta photo de session</p>
-            <p className="text-sm text-mute">Tape le cercle pour ajouter ou changer ta photo. Elle disparaît à la fin de la soirée.</p>
-          </div>
         </section>
       ) : null}
 
@@ -446,28 +425,6 @@ export function SessionView({ code }: Props) {
                   >
                     {isFirst ? 'FIRST KILL' : 'MARQUER FIRST KILL'}
                   </button>
-                  <label className="mt-2 block text-center text-xs text-mute">
-                    Photo session
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0]
-                        if (!file) {
-                          return
-                        }
-                        void compressPhoto(file).then((photoData) =>
-                          run('photo', () =>
-                            mutate(`/api/sessions/${code}/photo`, {
-                              method: 'POST',
-                              body: JSON.stringify({ playerId: player.id, photoData }),
-                            }),
-                          ),
-                        )
-                      }}
-                    />
-                  </label>
                 </div>
               </article>
             )
@@ -490,32 +447,72 @@ export function SessionView({ code }: Props) {
         </button>
       ) : null}
 
-      <Ticket session={session} names={names} />
+      <div id="historique" className="flex scroll-mt-4 flex-col gap-4">
+        <Ticket session={session} names={names} />
 
-      {closedGames.length > 0 ? (
         <section>
-          <h3 className="font-hud text-xs tracking-[0.25em] text-mute">GAMES JOUÉES</h3>
-          <ul className="mt-3 flex flex-col gap-2">
-            {closedGames.map((game) => (
-              <li key={game.id} className="rounded-2xl bg-panel/80 px-4 py-3 text-sm">
-                <p className="font-semibold">Game {game.index}</p>
-                <div className="mt-2 flex flex-wrap gap-3">
-                  {session.players.map((player) => {
-                    const score = game.scores.find((row) => row.playerId === player.id)
-                    const points = (score?.kills ?? 0) + (score?.revives ?? 0)
-                    return (
-                      <span key={player.id} className="flex items-center gap-1.5">
-                        <PlayerAvatar avatar={player.avatar} photoData={player.photoData} size={20} />
-                        {player.name} {points}
-                      </span>
-                    )
-                  })}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <h3 className="font-hud text-xs tracking-[0.25em] text-mute">HISTORIQUE DES GAMES</h3>
+          {closedGames.length === 0 ? (
+            <p className="mt-3 rounded-2xl bg-panel px-4 py-3 text-sm text-mute">
+              Aucune game clôturée pour l’instant.
+            </p>
+          ) : (
+            <ul className="mt-3 flex flex-col gap-2">
+              {closedGames.map((game) => {
+                const firstKill = game.firstKillPlayerId ? names.get(game.firstKillPlayerId) : null
+                return (
+                  <li key={game.id} className="rounded-2xl bg-panel/80 px-4 py-3 text-sm">
+                    <p className="font-semibold">
+                      Game {game.index}
+                      {firstKill ? <span className="font-normal text-mute"> · FK {firstKill.name}</span> : null}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-3">
+                      {session.players.map((player) => {
+                        const score = game.scores.find((row) => row.playerId === player.id)
+                        const points = modifiedPoints(game.scores, game.powers).get(player.id) ?? 0
+                        return (
+                          <span key={player.id} className="flex items-center gap-1.5">
+                            <PlayerAvatar avatar={player.avatar} photoData={player.photoData} size={20} />
+                            {player.name} {points}
+                          </span>
+                        )
+                      })}
+                    </div>
+                    {game.powers.length > 0 ? (
+                      <p className="mt-2 text-xs text-gold">
+                        {game.powers
+                          .map((power) => {
+                            const who = names.get(power.playerId)?.name ?? '?'
+                            if (power.kind === 'double') {
+                              return `${who} x2`
+                            }
+                            if (power.kind === 'shield') {
+                              return `${who} bouclier`
+                            }
+                            return `${who} /2 ${names.get(power.targetPlayerId ?? '')?.name ?? '?'}`
+                          })
+                          .join(' · ')}
+                      </p>
+                    ) : null}
+                    {game.transfers.length > 0 ? (
+                      <ul className="mt-2 flex flex-col gap-1 text-mute">
+                        {game.transfers.map((row) => (
+                          <li key={`${game.id}-${row.fromPlayerId}-${row.toPlayerId}`}>
+                            {names.get(row.fromPlayerId)?.name ?? '?'} → {names.get(row.toPlayerId)?.name ?? '?'}{' '}
+                            {formatCents(row.amountCents)}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-xs text-mute">Personne ne paie sur cette game.</p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </section>
-      ) : null}
+      </div>
 
       {session.status === 'open' && friends.length > 0 ? (
         <section className="rounded-3xl bg-panel p-4">
@@ -556,14 +553,16 @@ export function SessionView({ code }: Props) {
             void run('add', async () => {
               await mutate(`/api/sessions/${code}/players`, {
                 method: 'POST',
-                body: JSON.stringify({ name: newName, avatar: newAvatar }),
+                body: JSON.stringify({ name: newName, avatar: newAvatar, photoData: newPhoto }),
               })
               setNewName('')
+              setNewPhoto(null)
             })
           }}
         >
           <span className="font-hud text-xs tracking-[0.2em] text-mute">AJOUTER UN POTE</span>
           <AvatarPicker value={newAvatar} onChange={setNewAvatar} />
+          <PhotoPicker value={newPhoto} onChange={setNewPhoto} />
           <div className="flex gap-2">
             <input
               value={newName}

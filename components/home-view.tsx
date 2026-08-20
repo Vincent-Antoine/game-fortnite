@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useMemo, useState, type FormEvent } from 'react'
 import { AvatarPicker } from '@/components/avatar'
+import { PhotoPicker } from '@/components/photo-picker'
 import { parseStakeToCents } from '@/lib/money'
 
 type Mode = 'create' | 'join'
@@ -12,6 +13,7 @@ export function HomeView() {
   const [mode, setMode] = useState<Mode>('create')
   const [name, setName] = useState('')
   const [avatar, setAvatar] = useState('drop')
+  const [photoData, setPhotoData] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [stake, setStake] = useState('0,25')
   const [error, setError] = useState('')
@@ -31,7 +33,7 @@ export function HomeView() {
         const response = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, avatar, stakeCents }),
+          body: JSON.stringify({ name, avatar, photoData, stakeCents }),
         })
         const data = await response.json()
         if (!response.ok) {
@@ -43,7 +45,7 @@ export function HomeView() {
       const response = await fetch(`/api/sessions/${code}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, avatar }),
+        body: JSON.stringify({ name, avatar, photoData }),
       })
       const data = await response.json()
       if (!response.ok) {
@@ -103,6 +105,8 @@ export function HomeView() {
           <span className="font-hud text-xs tracking-[0.2em] text-mute">AVATAR</span>
           <AvatarPicker value={avatar} onChange={setAvatar} />
         </div>
+
+        <PhotoPicker value={photoData} onChange={setPhotoData} />
 
         {mode === 'create' ? (
           <label className="flex flex-col gap-2">

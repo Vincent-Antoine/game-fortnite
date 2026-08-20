@@ -10,12 +10,13 @@ export async function POST(
 ) {
   try {
     const { code } = await context.params
-    const body = (await request.json()) as { name?: string; avatar?: string }
+    const body = (await request.json()) as { name?: string; avatar?: string; photoData?: string | null }
     const user = await getAuthUser()
     const result = await joinSession({
       code,
       name: body.name || user?.name || '',
       avatar: body.avatar,
+      photoData: body.photoData,
       userId: user?.id ?? null,
     })
     await setAuthCookie(result.dto.code, result.playerId, result.token)
