@@ -2,11 +2,23 @@ import { AVATAR_IDS, AVATAR_LABELS, type AvatarId, sanitizeAvatar } from '@/lib/
 
 type Props = {
   avatar: string
+  photoData?: string | null
   size?: number
   className?: string
 }
 
-export function PlayerAvatar({ avatar, size = 40, className }: Props) {
+export function PlayerAvatar({ avatar, photoData, size = 40, className }: Props) {
+  if (photoData) {
+    return (
+      <img
+        src={photoData}
+        alt=""
+        width={size}
+        height={size}
+        className={`rounded-full object-cover ${className ?? ''}`}
+      />
+    )
+  }
   const id = sanitizeAvatar(avatar)
   return (
     <svg

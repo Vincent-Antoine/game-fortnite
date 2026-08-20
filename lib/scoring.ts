@@ -10,31 +10,67 @@ export type Transfer = {
   amountCents: number
 }
 
+export type PowerKind = 'double' | 'shield' | 'halve'
+
+export type PowerUse = {
+  playerId: string
+  kind: PowerKind
+  targetPlayerId: string | null
+}
+
 type RankedPlayer = {
   playerId: string
   points: number
   hasFirstKill: boolean
+  rankKey: string
 }
 
 export function pointsOf(score: PlayerScore): number {
   return score.kills + score.revives
 }
 
+export function modifiedPoints(scores: PlayerScore[], powers: PowerUse[] = []): Map<string, number> {
+  const points = new Map(scores.map((score) => [score.playerId, pointsOf(score)]))
+  for (const power of powers) {
+    if (power.kind === 'double') {
+      points.set(power.playerId, (points.get(power.playerId) ?? 0) * 2)
+    }
+  }
+  for (const power of powers) {
+    if (power.kind === 'halve' && power.targetPlayerId) {
+      const current = points.get(power.targetPlayerId) ?? 0
+      points.set(power.targetPlayerId, Math.floor(current / 2))
+    }
+  }
+  return points
+}
+
+function rankKeyOf(row: RankedPlayer): string {
+  return `${row.points}:${row.hasFirstKill ? '1' : '0'}`
+}
+
 export function settleGame(input: {
   scores: PlayerScore[]
   firstKillPlayerId: string | null
   stakeCents: number
+  powers?: PowerUse[]
 }): Transfer[] {
-  const { scores, firstKillPlayerId, stakeCents } = input
+  const { scores, firstKillPlayerId, stakeCents, powers = [] } = input
   if (scores.length < 2) {
     return []
   }
 
-  const ranked: RankedPlayer[] = scores.map((score) => ({
-    playerId: score.playerId,
-    points: pointsOf(score),
-    hasFirstKill: firstKillPlayerId === score.playerId,
-  }))
+  const points = modifiedPoints(scores, powers)
+  const ranked: RankedPlayer[] = scores.map((score) => {
+    const row = {
+      playerId: score.playerId,
+      points: points.get(score.playerId) ?? 0,
+      hasFirstKill: firstKillPlayerId === score.playerId,
+      rankKey: '',
+    }
+    row.rankKey = rankKeyOf(row)
+    return row
+  })
 
   ranked.sort((a, b) => {
     if (b.points !== a.points) {
@@ -48,13 +84,26 @@ export function settleGame(input: {
 
   const best = ranked[0]
   const worst = ranked[ranked.length - 1]
-  const winners = ranked.filter(
-    (row) => row.points === best.points && row.hasFirstKill === best.hasFirstKill,
+  const winners = ranked.filter((row) => row.rankKey === best.rankKey)
+  let losers = ranked.filter((row) => row.rankKey === worst.rankKey)
+
+  const shielded = new Set(
+    powers.filter((power) => power.kind === 'shield').map((power) => power.playerId),
   )
-  const losers = ranked.filter(
-    (row) =>
-      row.points === worst.points && row.hasFirstKill === worst.hasFirstKill,
-  )
+  const shieldedLosers = losers.filter((row) => shielded.has(row.playerId))
+  if (shieldedLosers.length > 0) {
+    losers = losers.filter((row) => !shielded.has(row.playerId))
+    if (losers.length === 0) {
+      const remaining = ranked.filter(
+        (row) => !winners.some((winner) => winner.playerId === row.playerId) && !shielded.has(row.playerId),
+      )
+      if (remaining.length === 0) {
+        return []
+      }
+      const nextWorst = remaining[remaining.length - 1]
+      losers = remaining.filter((row) => row.rankKey === nextWorst.rankKey)
+    }
+  }
 
   if (winners.some((row) => losers.some((loser) => loser.playerId === row.playerId))) {
     return []

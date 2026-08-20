@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AvatarPicker, PlayerAvatar } from '@/components/avatar'
+import { compressPhoto } from '@/lib/compress-photo'
 import { formatCents } from '@/lib/money'
+import { modifiedPoints } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
 
 type Props = { code: string }
@@ -15,8 +17,42 @@ export function SessionView({ code }: Props) {
   const [pending, setPending] = useState('')
   const [newName, setNewName] = useState('')
   const [newAvatar, setNewAvatar] = useState('drop')
+  const [friends, setFriends] = useState<{ user: { id: string; name: string }; status: string }[]>([])
   const skipPoll = useRef(0)
   const saveTimer = useRef(0)
+  const pendingDeltas = useRef<Record<string, { kills: number; revives: number }>>({})
+  const flushTimer = useRef(0)
+  const sessionRef = useRef<SessionDTO | null>(null)
+  sessionRef.current = session
+
+  const mergeRemote = useCallback((remote: SessionDTO) => {
+    const local = sessionRef.current
+    const pending = pendingDeltas.current
+    if (!local || Object.keys(pending).length === 0) {
+      return remote
+    }
+    const localOpen = local.games.find((game) => game.status === 'open')
+    const remoteOpen = remote.games.find((game) => game.status === 'open')
+    if (!localOpen || !remoteOpen) {
+      return remote
+    }
+    return {
+      ...remote,
+      games: remote.games.map((game) =>
+        game.id === remoteOpen.id
+          ? {
+              ...game,
+              scores: game.scores.map((row) => {
+                if (!pending[row.playerId]) {
+                  return row
+                }
+                return localOpen.scores.find((score) => score.playerId === row.playerId) ?? row
+              }),
+            }
+          : game,
+      ),
+    }
+  }, [])
 
   const load = useCallback(async () => {
     if (Date.now() < skipPoll.current) {
@@ -29,8 +65,8 @@ export function SessionView({ code }: Props) {
       return
     }
     setError('')
-    setSession(data)
-  }, [code])
+    setSession(mergeRemote(data))
+  }, [code, mergeRemote])
 
   useEffect(() => {
     void load()
@@ -39,6 +75,14 @@ export function SessionView({ code }: Props) {
         void load()
       }
     }, 2000)
+    void fetch('/api/friends')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (data?.friends) {
+          setFriends(data.friends.filter((row: { status: string }) => row.status === 'accepted'))
+        }
+      })
+      .catch(() => undefined)
     return () => window.clearInterval(timer)
   }, [load])
 
@@ -91,10 +135,41 @@ export function SessionView({ code }: Props) {
         method: 'PATCH',
         body: JSON.stringify({
           firstKillPlayerId: game.firstKillPlayerId,
-          scores: game.scores,
+          scores: [],
         }),
       }).catch((err: Error) => setError(err.message))
     }, 280) as unknown as number
+  }
+
+  function flushNudges() {
+    const game = sessionRef.current?.games.find((row) => row.status === 'open')
+    if (!game) {
+      return
+    }
+    const queued = pendingDeltas.current
+    pendingDeltas.current = {}
+    for (const [playerId, delta] of Object.entries(queued)) {
+      if (delta.kills === 0 && delta.revives === 0) {
+        continue
+      }
+      void fetch(`/api/sessions/${code}/games/${game.id}/nudge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId,
+          killsDelta: delta.kills,
+          revivesDelta: delta.revives,
+        }),
+      })
+        .then(async (response) => {
+          const data = await response.json()
+          if (!response.ok) {
+            throw new Error(data.error ?? 'Score non enregistré')
+          }
+          setSession(mergeRemote(data))
+        })
+        .catch((err: Error) => setError(err.message))
+    }
   }
 
   function bump(playerId: string, field: 'kills' | 'revives', delta: number) {
@@ -106,10 +181,15 @@ export function SessionView({ code }: Props) {
         ? { ...row, [field]: Math.max(0, Math.min(99, row[field] + delta)) }
         : row,
     )
-    scheduleSave({
+    const current = pendingDeltas.current[playerId] ?? { kills: 0, revives: 0 }
+    current[field] += delta
+    pendingDeltas.current[playerId] = current
+    setSession({
       ...session,
       games: session.games.map((game) => (game.id === openGame.id ? { ...game, scores } : game)),
     })
+    window.clearTimeout(flushTimer.current)
+    flushTimer.current = window.setTimeout(flushNudges, 140) as unknown as number
   }
 
   function setFirstKill(playerId: string) {
@@ -164,6 +244,57 @@ export function SessionView({ code }: Props) {
             <h2 className="font-display text-4xl tracking-wide">GAME {String(openGame.index).padStart(2, '0')}</h2>
             <p className="text-sm text-mute">First kill départage</p>
           </div>
+          {!openGame.powersLocked ? (
+            <div className="rounded-3xl bg-panel p-4">
+              <p className="font-hud text-xs tracking-[0.2em] text-gold">POUVOIRS · 1 FOIS / SESSION</p>
+              <p className="mt-1 text-sm text-mute">x2 ton score · /2 un adversaire · bouclier (le 2e paie)</p>
+              {session.players.map((player) => (
+                <div key={player.id} className="mt-3 flex flex-wrap gap-2">
+                  <span className="w-full text-sm font-semibold">{player.name}</span>
+                  <button
+                    type="button"
+                    disabled={player.usedPowers.double}
+                    onClick={() => void run('power', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, { method: 'POST', body: JSON.stringify({ playerId: player.id, kind: 'double' }) }))}
+                    className="rounded-full bg-dusk px-3 py-1 text-xs disabled:opacity-30"
+                  >
+                    x2
+                  </button>
+                  <button
+                    type="button"
+                    disabled={player.usedPowers.shield}
+                    onClick={() => void run('power', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, { method: 'POST', body: JSON.stringify({ playerId: player.id, kind: 'shield' }) }))}
+                    className="rounded-full bg-dusk px-3 py-1 text-xs disabled:opacity-30"
+                  >
+                    Bouclier
+                  </button>
+                  {session.players
+                    .filter((target) => target.id !== player.id)
+                    .map((target) => (
+                      <button
+                        key={target.id}
+                        type="button"
+                        disabled={player.usedPowers.halve}
+                        onClick={() => void run('power', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, { method: 'POST', body: JSON.stringify({ playerId: player.id, kind: 'halve', targetPlayerId: target.id }) }))}
+                        className="rounded-full bg-dusk px-3 py-1 text-xs disabled:opacity-30"
+                      >
+                        /2 {target.name}
+                      </button>
+                    ))}
+                </div>
+              ))}
+              <button
+                type="button"
+                className="mt-4 w-full rounded-full bg-gold py-3 font-semibold text-dusk"
+                onClick={() => void run('lock', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers/lock`, { method: 'POST' }))}
+              >
+                Verrouiller et jouer
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-mute">
+              Pouvoirs : {openGame.powers.map((power) => `${names.get(power.playerId)?.name} ${power.kind}`).join(' · ') || 'aucun'}
+            </p>
+          )}
           {session.players.map((player) => {
             const score = openGame.scores.find((row) => row.playerId === player.id) ?? {
               playerId: player.id,
@@ -181,7 +312,7 @@ export function SessionView({ code }: Props) {
                 <div className="px-4 py-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <PlayerAvatar avatar={player.avatar} size={48} />
+                      <PlayerAvatar avatar={player.avatar} photoData={player.photoData} size={48} />
                       <div>
                         <p className="text-lg font-semibold">
                           {player.name}
@@ -203,6 +334,28 @@ export function SessionView({ code }: Props) {
                   >
                     {isFirst ? 'FIRST KILL' : 'MARQUER FIRST KILL'}
                   </button>
+                  <label className="mt-2 block text-center text-xs text-mute">
+                    Photo session
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        if (!file) {
+                          return
+                        }
+                        void compressPhoto(file).then((photoData) =>
+                          run('photo', () =>
+                            mutate(`/api/sessions/${code}/photo`, {
+                              method: 'POST',
+                              body: JSON.stringify({ playerId: player.id, photoData }),
+                            }),
+                          ),
+                        )
+                      }}
+                    />
+                  </label>
                 </div>
               </article>
             )
@@ -240,7 +393,7 @@ export function SessionView({ code }: Props) {
                     const points = (score?.kills ?? 0) + (score?.revives ?? 0)
                     return (
                       <span key={player.id} className="flex items-center gap-1.5">
-                        <PlayerAvatar avatar={player.avatar} size={20} />
+                        <PlayerAvatar avatar={player.avatar} photoData={player.photoData} size={20} />
                         {player.name} {points}
                       </span>
                     )
@@ -249,6 +402,36 @@ export function SessionView({ code }: Props) {
               </li>
             ))}
           </ul>
+        </section>
+      ) : null}
+
+      {session.status === 'open' && friends.length > 0 ? (
+        <section className="rounded-3xl bg-panel p-4">
+          <p className="font-hud text-xs tracking-[0.2em] text-gold">INVITER UN AMI</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {friends.map((row) => (
+              <button
+                key={row.user.id}
+                type="button"
+                className="rounded-full bg-dusk px-3 py-2 text-sm"
+                onClick={() =>
+                  void run('invite', async () => {
+                    const response = await fetch(`/api/sessions/${code}/invite`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ friendUserId: row.user.id }),
+                    })
+                    const data = await response.json()
+                    if (!response.ok) {
+                      throw new Error(data.error ?? 'Invitation impossible')
+                    }
+                  })
+                }
+              >
+                {row.user.name}
+              </button>
+            ))}
+          </div>
         </section>
       ) : null}
 
@@ -302,10 +485,13 @@ export function SessionView({ code }: Props) {
 
 function liveBoard(session: SessionDTO) {
   const openGame = session.games.find((game) => game.status === 'open')
+  const pointsMap = openGame
+    ? modifiedPoints(openGame.scores, openGame.powers)
+    : new Map<string, number>()
   return session.players
     .map((player) => {
       const gameScore = openGame?.scores.find((row) => row.playerId === player.id)
-      const gamePoints = (gameScore?.kills ?? 0) + (gameScore?.revives ?? 0)
+      const gamePoints = pointsMap.get(player.id) ?? (gameScore ? gameScore.kills + gameScore.revives : 0)
       const nightPoints = session.games.reduce((sum, game) => {
         const row = game.scores.find((score) => score.playerId === player.id)
         return sum + (row ? row.kills + row.revives : 0)
@@ -347,7 +533,7 @@ function Scoreboard({
             style={{ boxShadow: `inset 4px 0 0 ${row.player.color}` }}
           >
             <span className="w-5 font-hud text-sm text-mute">{index + 1}</span>
-            <PlayerAvatar avatar={row.player.avatar} size={36} />
+            <PlayerAvatar avatar={row.player.avatar} photoData={row.player.photoData} size={36} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">
                 {row.player.name}
@@ -428,10 +614,10 @@ function Ticket({
             return (
               <li key={`${row.fromPlayerId}-${row.toPlayerId}`} className="flex items-center justify-between gap-3">
                 <span className="flex items-center gap-2 text-sm leading-5">
-                  {from ? <PlayerAvatar avatar={from.avatar} size={22} /> : null}
+                  {from ? <PlayerAvatar avatar={from.avatar} photoData={from.photoData} size={22} /> : null}
                   {from?.name ?? '???'}
                   <span className="opacity-50">→</span>
-                  {to ? <PlayerAvatar avatar={to.avatar} size={22} /> : null}
+                  {to ? <PlayerAvatar avatar={to.avatar} photoData={to.photoData} size={22} /> : null}
                   {to?.name ?? '???'}
                 </span>
                 <span className="font-display text-2xl leading-none">{formatCents(row.amountCents)}</span>

@@ -1,21 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { colorForIndex } from '@/lib/colors'
 import { sanitizeAvatar } from '@/lib/avatars'
 import { normalizeCode, randomCode } from '@/lib/code'
 import { getDb } from '@/lib/db'
-import { games, players, scores, sessions, transfers } from '@/lib/db/schema'
-import { settleGame, simplifyDebts, netBalances, type Transfer } from '@/lib/scoring'
+import { gamePowers, games, players, scores, sessions, transfers } from '@/lib/db/schema'
+import { ApiError } from '@/lib/errors'
+import { settleGame, simplifyDebts, netBalances, type PowerKind, type PowerUse, type Transfer } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
-
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message)
-  }
-}
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
@@ -57,6 +49,7 @@ export async function createSession(input: {
   name: string
   avatar?: string
   stakeCents?: number
+  userId?: string | null
 }): Promise<{ dto: SessionDTO; playerId: string; token: string }> {
   const db = getDb()
   const name = sanitizeName(input.name)
@@ -78,6 +71,7 @@ export async function createSession(input: {
     .insert(players)
     .values({
       sessionId: session.id,
+      userId: input.userId ?? null,
       name,
       avatar,
       isHost: true,
@@ -94,6 +88,7 @@ export async function joinSession(input: {
   code: string
   name: string
   avatar?: string
+  userId?: string | null
 }): Promise<{ dto: SessionDTO; playerId: string; token: string }> {
   const db = getDb()
   const code = normalizeCode(input.code)
@@ -115,13 +110,26 @@ export async function joinSession(input: {
   )
   const token = randomBytes(24).toString('hex')
 
+  if (input.userId) {
+    const mine = existingPlayers.find((player) => player.userId === input.userId)
+    if (mine) {
+      await db.update(players).set({ tokenHash: hashToken(token), avatar }).where(eq(players.id, mine.id))
+      const dto = await getSessionDto(session.code, mine.id)
+      return { dto, playerId: mine.id, token }
+    }
+  }
+
   if (duplicate) {
     if (duplicate.tokenHash) {
       throw new ApiError(409, 'Ce pseudo est déjà pris')
     }
     await db
       .update(players)
-      .set({ tokenHash: hashToken(token), avatar })
+      .set({
+        tokenHash: hashToken(token),
+        avatar,
+        userId: input.userId ?? duplicate.userId,
+      })
       .where(eq(players.id, duplicate.id))
     const dto = await getSessionDto(session.code, duplicate.id)
     return { dto, playerId: duplicate.id, token }
@@ -135,6 +143,7 @@ export async function joinSession(input: {
     .insert(players)
     .values({
       sessionId: session.id,
+      userId: input.userId ?? null,
       name,
       avatar,
       isHost: false,
@@ -265,6 +274,7 @@ export async function closeGame(code: string, gameId: string): Promise<SessionDT
   }
 
   const rows = await db.select().from(scores).where(eq(scores.gameId, game.id))
+  const powerRows = await db.select().from(gamePowers).where(eq(gamePowers.gameId, game.id))
   const settled = settleGame({
     scores: rows.map((row) => ({
       playerId: row.playerId,
@@ -273,6 +283,11 @@ export async function closeGame(code: string, gameId: string): Promise<SessionDT
     })),
     firstKillPlayerId: game.firstKillPlayerId,
     stakeCents: session.stakeCents,
+    powers: powerRows.map((row) => ({
+      playerId: row.playerId,
+      kind: row.kind as PowerKind,
+      targetPlayerId: row.targetPlayerId,
+    })),
   })
 
   if (settled.length > 0) {
@@ -333,6 +348,12 @@ export async function getSessionDto(
   for (const [index, game] of sessionGames.entries()) {
     const gameScores = await db.select().from(scores).where(eq(scores.gameId, game.id))
     const gameTransfers = await db.select().from(transfers).where(eq(transfers.gameId, game.id))
+    const powerRows = await db.select().from(gamePowers).where(eq(gamePowers.gameId, game.id))
+    const mappedPowers: PowerUse[] = powerRows.map((row) => ({
+      playerId: row.playerId,
+      kind: row.kind as PowerKind,
+      targetPlayerId: row.targetPlayerId,
+    }))
     const mappedTransfers = gameTransfers.map((row) => ({
       fromPlayerId: row.fromPlayerId,
       toPlayerId: row.toPlayerId,
@@ -345,14 +366,25 @@ export async function getSessionDto(
       id: game.id,
       index: index + 1,
       status: game.status as 'open' | 'closed',
+      powersLocked: game.powersLocked,
       firstKillPlayerId: game.firstKillPlayerId,
       scores: gameScores.map((row) => ({
         playerId: row.playerId,
         kills: row.kills,
         revives: row.revives,
       })),
+      powers: mappedPowers,
       transfers: mappedTransfers,
     })
+  }
+
+  const usedByPlayer = new Map<string, { double: boolean; shield: boolean; halve: boolean }>()
+  for (const game of gameDtos) {
+    for (const power of game.powers) {
+      const current = usedByPlayer.get(power.playerId) ?? { double: false, shield: false, halve: false }
+      current[power.kind] = true
+      usedByPlayer.set(power.playerId, current)
+    }
   }
 
   return {
@@ -364,8 +396,10 @@ export async function getSessionDto(
       id: player.id,
       name: player.name,
       avatar: player.avatar,
+      photoData: player.photoData,
       isHost: player.isHost,
       color: player.color,
+      usedPowers: usedByPlayer.get(player.id) ?? { double: false, shield: false, halve: false },
     })),
     games: gameDtos,
     ticket: simplifyDebts(netBalances(closedTransfers)),
@@ -437,4 +471,101 @@ async function ensureScoreForOpenGame(sessionId: string, playerId: string) {
     .insert(scores)
     .values({ gameId: open.id, playerId, kills: 0, revives: 0 })
     .onConflictDoNothing({ target: [scores.gameId, scores.playerId] })
+}
+
+export async function nudgeScore(input: {
+  code: string
+  gameId: string
+  playerId: string
+  killsDelta?: number
+  revivesDelta?: number
+}): Promise<SessionDTO> {
+  const db = getDb()
+  const session = await requireOpenSession(input.code)
+  const game = await requireGame(session.id, input.gameId)
+  if (game.status !== 'open') {
+    throw new ApiError(409, 'Game déjà clôturée')
+  }
+  const killsDelta = Number(input.killsDelta ?? 0)
+  const revivesDelta = Number(input.revivesDelta ?? 0)
+  if (!Number.isInteger(killsDelta) || !Number.isInteger(revivesDelta)) {
+    throw new ApiError(400, 'Delta invalide')
+  }
+  if (Math.abs(killsDelta) + Math.abs(revivesDelta) === 0 || Math.abs(killsDelta) > 20 || Math.abs(revivesDelta) > 20) {
+    throw new ApiError(400, 'Delta invalide')
+  }
+  await db.execute(sql`
+    update scores
+    set
+      kills = greatest(0, least(99, kills + ${killsDelta})),
+      revives = greatest(0, least(99, revives + ${revivesDelta}))
+    where game_id = ${input.gameId}::uuid and player_id = ${input.playerId}::uuid
+  `)
+  return getSessionDto(session.code, null)
+}
+
+export async function setPlayerPhoto(input: {
+  code: string
+  playerId: string
+  photoData: string | null
+}): Promise<SessionDTO> {
+  const session = await requireOpenSession(input.code)
+  if (input.photoData && (input.photoData.length > 180000 || !input.photoData.startsWith('data:image/'))) {
+    throw new ApiError(400, 'Photo trop lourde (max ~100 Ko)')
+  }
+  const db = getDb()
+  await db.update(players).set({ photoData: input.photoData }).where(eq(players.id, input.playerId))
+  return getSessionDto(session.code, null)
+}
+
+export async function activatePower(input: {
+  code: string
+  gameId: string
+  playerId: string
+  kind: PowerKind
+  targetPlayerId: string | null
+}): Promise<SessionDTO> {
+  const db = getDb()
+  const session = await requireOpenSession(input.code)
+  const game = await requireGame(session.id, input.gameId)
+  if (game.status !== 'open') {
+    throw new ApiError(409, 'Game déjà clôturée')
+  }
+  if (game.powersLocked) {
+    throw new ApiError(409, 'Les pouvoirs sont verrouillés')
+  }
+  if (!['double', 'shield', 'halve'].includes(input.kind)) {
+    throw new ApiError(400, 'Pouvoir inconnu')
+  }
+  if (input.kind === 'halve' && !input.targetPlayerId) {
+    throw new ApiError(400, 'Choisis une cible')
+  }
+  const sessionGames = await db.select({ id: games.id }).from(games).where(eq(games.sessionId, session.id))
+  for (const row of sessionGames) {
+    const used = await db
+      .select()
+      .from(gamePowers)
+      .where(and(eq(gamePowers.gameId, row.id), eq(gamePowers.playerId, input.playerId), eq(gamePowers.kind, input.kind)))
+    if (used.length > 0) {
+      throw new ApiError(409, 'Déjà utilisé dans cette session')
+    }
+  }
+  await db.insert(gamePowers).values({
+    gameId: game.id,
+    playerId: input.playerId,
+    kind: input.kind,
+    targetPlayerId: input.kind === 'halve' ? input.targetPlayerId : null,
+  })
+  return getSessionDto(session.code, null)
+}
+
+export async function lockGamePowers(code: string, gameId: string): Promise<SessionDTO> {
+  const session = await requireOpenSession(code)
+  const game = await requireGame(session.id, gameId)
+  if (game.status !== 'open') {
+    throw new ApiError(409, 'Game déjà clôturée')
+  }
+  const db = getDb()
+  await db.update(games).set({ powersLocked: true }).where(eq(games.id, game.id))
+  return getSessionDto(session.code, null)
 }

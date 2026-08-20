@@ -1,7 +1,8 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { normalizeCode } from '@/lib/code'
-import { ApiError, identifyPlayer } from '@/lib/session-service'
+import { ApiError } from '@/lib/errors'
+import { identifyPlayer } from '@/lib/session-service'
 import type { SessionDTO } from '@/lib/types'
 
 export function jsonError(error: unknown) {

@@ -130,6 +130,58 @@ describe('settleGame', () => {
   })
 })
 
+describe('pouvoirs', () => {
+  const scores = [
+    { playerId: brandon, kills: 2, revives: 0 },
+    { playerId: dany, kills: 3, revives: 0 },
+    { playerId: vincent, kills: 0, revives: 0 },
+  ]
+
+  it('double le score du lanceur avant le classement', () => {
+    const result = settleGame({
+      scores,
+      firstKillPlayerId: null,
+      stakeCents: 25,
+      powers: [{ playerId: brandon, kind: 'double', targetPlayerId: null }],
+    })
+    expect(result).toEqual([
+      { fromPlayerId: vincent, toPlayerId: brandon, amountCents: 100 },
+    ])
+  })
+
+  it('divise par deux le score de la cible', () => {
+    const result = settleGame({
+      scores: [
+        { playerId: brandon, kills: 6, revives: 0 },
+        { playerId: dany, kills: 4, revives: 0 },
+        { playerId: vincent, kills: 0, revives: 0 },
+      ],
+      firstKillPlayerId: null,
+      stakeCents: 25,
+      powers: [{ playerId: vincent, kind: 'halve', targetPlayerId: brandon }],
+    })
+    expect(result).toEqual([
+      { fromPlayerId: vincent, toPlayerId: dany, amountCents: 100 },
+    ])
+  })
+
+  it('le bouclier fait payer le 2e au lieu du dernier', () => {
+    const result = settleGame({
+      scores: [
+        { playerId: brandon, kills: 5, revives: 0 },
+        { playerId: dany, kills: 4, revives: 0 },
+        { playerId: vincent, kills: 0, revives: 0 },
+      ],
+      firstKillPlayerId: null,
+      stakeCents: 25,
+      powers: [{ playerId: vincent, kind: 'shield', targetPlayerId: null }],
+    })
+    expect(result).toEqual([
+      { fromPlayerId: dany, toPlayerId: brandon, amountCents: 125 },
+    ])
+  })
+})
+
 describe('simplifyDebts', () => {
   it('agrège les games en un ticket Tricount (Vincent doit 2,50 € à Brandon)', () => {
     const net = netBalances([

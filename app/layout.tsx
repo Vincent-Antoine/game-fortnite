@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { Anton, Outfit, Share_Tech_Mono } from 'next/font/google'
+import { AppChrome } from '@/components/app-chrome'
 import { SwRegister } from '@/components/sw-register'
 import './globals.css'
 
@@ -44,6 +45,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       className={`${outfit.variable} ${anton.variable} ${hud.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        <AppChrome />
         {children}
         <SwRegister />
       </body>

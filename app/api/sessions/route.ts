@@ -1,14 +1,17 @@
-import { NextResponse } from 'next/server'
+import { getAuthUser } from '@/lib/auth'
 import { jsonError, setAuthCookie } from '@/lib/http'
 import { createSession } from '@/lib/session-service'
+import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { name?: string; stakeCents?: number; avatar?: string }
+    const user = await getAuthUser()
     const result = await createSession({
-      name: body.name ?? '',
+      name: body.name || user?.name || '',
       avatar: body.avatar,
       stakeCents: body.stakeCents,
+      userId: user?.id ?? null,
     })
     await setAuthCookie(result.dto.code, result.playerId, result.token)
     return NextResponse.json(result.dto)
