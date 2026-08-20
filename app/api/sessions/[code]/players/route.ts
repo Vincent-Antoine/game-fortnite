@@ -8,8 +8,8 @@ export async function POST(
 ) {
   try {
     const { code } = await context.params
-    const body = (await request.json()) as { name?: string }
-    const dto = await addPlayer({ code, name: body.name ?? '' })
+    const body = (await request.json()) as { name?: string; avatar?: string }
+    const dto = await addPlayer({ code, name: body.name ?? '', avatar: body.avatar })
     return NextResponse.json(await withYou(code, dto))
   } catch (error) {
     return jsonError(error)

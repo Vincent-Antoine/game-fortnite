@@ -8,8 +8,8 @@ export async function POST(
 ) {
   try {
     const { code } = await context.params
-    const body = (await request.json()) as { name?: string }
-    const result = await joinSession({ code, name: body.name ?? '' })
+    const body = (await request.json()) as { name?: string; avatar?: string }
+    const result = await joinSession({ code, name: body.name ?? '', avatar: body.avatar })
     await setAuthCookie(result.dto.code, result.playerId, result.token)
     return NextResponse.json(result.dto)
   } catch (error) {

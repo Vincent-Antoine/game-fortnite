@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS players (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   name text NOT NULL,
+  avatar text NOT NULL DEFAULT 'drop',
   is_host boolean NOT NULL DEFAULT false,
   color text NOT NULL,
   token_hash text,

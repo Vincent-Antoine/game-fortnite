@@ -6,13 +6,13 @@ PWA pour compter kills, réas et dettes entre potes sur Fortnite.
 
 1. Copie `.env.example` vers `.env`
 2. Lance Postgres : `docker compose up -d`
-3. `npm run db:push` (ou le SQL `drizzle/0000_init.sql` est déjà chargé au premier start Docker)
+3. Exécute `drizzle/0000_init.sql` puis `drizzle/0001_avatars.sql`
 4. `npm run dev`
 
-## Vercel + Neon
+## Vercel
 
-1. Crée une base [Neon](https://neon.tech)
-2. Colle l’URL (pooled, `ssl`) dans `DATABASE_URL` sur Vercel
-3. Exécute `drizzle/0000_init.sql` dans Neon (SQL Editor)
-4. Déploie le repo sur Vercel
-5. Sur le téléphone : Safari/Chrome → Partager → Sur l’écran d’accueil
+Repo : https://github.com/Vincent-Antoine/game-fortnite
+
+1. Neon : crée une base, exécute `drizzle/0000_init.sql` puis `drizzle/0001_avatars.sql`
+2. Vercel : importe le repo, variable `DATABASE_URL` = URL pooled Neon
+3. Deploy, puis sur le téléphone : ouvrir le site → Ajouter à l’écran d’accueil

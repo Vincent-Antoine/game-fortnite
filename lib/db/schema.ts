@@ -24,6 +24,7 @@ export const players = pgTable(
       .notNull()
       .references(() => sessions.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    avatar: text('avatar').notNull().default('drop'),
     isHost: boolean('is_host').notNull().default(false),
     color: text('color').notNull(),
     tokenHash: text('token_hash'),

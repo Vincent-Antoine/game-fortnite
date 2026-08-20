@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { and, asc, eq } from 'drizzle-orm'
 import { colorForIndex } from '@/lib/colors'
+import { sanitizeAvatar } from '@/lib/avatars'
 import { normalizeCode, randomCode } from '@/lib/code'
 import { getDb } from '@/lib/db'
 import { games, players, scores, sessions, transfers } from '@/lib/db/schema'
@@ -54,10 +55,12 @@ async function uniqueCode(): Promise<string> {
 
 export async function createSession(input: {
   name: string
+  avatar?: string
   stakeCents?: number
 }): Promise<{ dto: SessionDTO; playerId: string; token: string }> {
   const db = getDb()
   const name = sanitizeName(input.name)
+  const avatar = sanitizeAvatar(input.avatar)
   const stakeCents = input.stakeCents ?? 25
   if (!Number.isInteger(stakeCents) || stakeCents < 1 || stakeCents > 5000) {
     throw new ApiError(400, 'Mise invalide')
@@ -76,6 +79,7 @@ export async function createSession(input: {
     .values({
       sessionId: session.id,
       name,
+      avatar,
       isHost: true,
       color: colorForIndex(0),
       tokenHash: hashToken(token),
@@ -89,10 +93,12 @@ export async function createSession(input: {
 export async function joinSession(input: {
   code: string
   name: string
+  avatar?: string
 }): Promise<{ dto: SessionDTO; playerId: string; token: string }> {
   const db = getDb()
   const code = normalizeCode(input.code)
   const name = sanitizeName(input.name)
+  const avatar = sanitizeAvatar(input.avatar)
   const session = await requireSession(code)
   if (session.status === 'closed') {
     throw new ApiError(409, 'Session clôturée')
@@ -115,7 +121,7 @@ export async function joinSession(input: {
     }
     await db
       .update(players)
-      .set({ tokenHash: hashToken(token) })
+      .set({ tokenHash: hashToken(token), avatar })
       .where(eq(players.id, duplicate.id))
     const dto = await getSessionDto(session.code, duplicate.id)
     return { dto, playerId: duplicate.id, token }
@@ -130,6 +136,7 @@ export async function joinSession(input: {
     .values({
       sessionId: session.id,
       name,
+      avatar,
       isHost: false,
       color: colorForIndex(existingPlayers.length),
       tokenHash: hashToken(token),
@@ -141,10 +148,11 @@ export async function joinSession(input: {
   return { dto, playerId: player.id, token }
 }
 
-export async function addPlayer(input: { code: string; name: string }): Promise<SessionDTO> {
+export async function addPlayer(input: { code: string; name: string; avatar?: string }): Promise<SessionDTO> {
   const db = getDb()
   const code = normalizeCode(input.code)
   const name = sanitizeName(input.name)
+  const avatar = sanitizeAvatar(input.avatar)
   const session = await requireOpenSession(code)
   const existingPlayers = await db
     .select()
@@ -164,6 +172,7 @@ export async function addPlayer(input: { code: string; name: string }): Promise<
     .values({
       sessionId: session.id,
       name,
+      avatar,
       isHost: false,
       color: colorForIndex(existingPlayers.length),
       tokenHash: null,
@@ -354,6 +363,7 @@ export async function getSessionDto(
     players: roster.map((player) => ({
       id: player.id,
       name: player.name,
+      avatar: player.avatar,
       isHost: player.isHost,
       color: player.color,
     })),

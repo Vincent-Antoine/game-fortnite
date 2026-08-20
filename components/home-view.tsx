@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useMemo, useState, type FormEvent } from 'react'
+import { AvatarPicker } from '@/components/avatar'
 import { parseStakeToCents } from '@/lib/money'
 
 type Mode = 'create' | 'join'
@@ -10,6 +11,7 @@ export function HomeView() {
   const router = useRouter()
   const [mode, setMode] = useState<Mode>('create')
   const [name, setName] = useState('')
+  const [avatar, setAvatar] = useState('drop')
   const [code, setCode] = useState('')
   const [stake, setStake] = useState('0,25')
   const [error, setError] = useState('')
@@ -29,7 +31,7 @@ export function HomeView() {
         const response = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, stakeCents }),
+          body: JSON.stringify({ name, avatar, stakeCents }),
         })
         const data = await response.json()
         if (!response.ok) {
@@ -41,7 +43,7 @@ export function HomeView() {
       const response = await fetch(`/api/sessions/${code}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, avatar }),
       })
       const data = await response.json()
       if (!response.ok) {
@@ -96,6 +98,11 @@ export function HomeView() {
             className="rounded-2xl border border-white/10 bg-dusk px-4 py-4 text-lg outline-none ring-horizon focus:ring-2"
           />
         </label>
+
+        <div className="flex flex-col gap-2">
+          <span className="font-hud text-xs tracking-[0.2em] text-mute">AVATAR</span>
+          <AvatarPicker value={avatar} onChange={setAvatar} />
+        </div>
 
         {mode === 'create' ? (
           <label className="flex flex-col gap-2">

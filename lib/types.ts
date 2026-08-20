@@ -8,6 +8,7 @@ export type SessionDTO = {
   players: {
     id: string
     name: string
+    avatar: string
     isHost: boolean
     color: string
   }[]
