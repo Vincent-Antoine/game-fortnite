@@ -2,14 +2,14 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
-import { PlayerAvatar } from '@/components/avatar'
+import { PresenceAvatar } from '@/components/presence-avatar'
 
 type FriendRow = {
   friendshipId: string
   status: string
   incoming: boolean
   unreadCount?: number
-  user: { id: string; name: string; friendCode: string; photoData?: string | null }
+  user: { id: string; name: string; friendCode: string; photoData?: string | null; lastSeenAt?: string | null }
 }
 
 export default function AmisPage() {
@@ -31,6 +31,12 @@ export default function AmisPage() {
 
   useEffect(() => {
     void load()
+    const timer = window.setInterval(() => {
+      if (!document.hidden) {
+        void load()
+      }
+    }, 4000)
+    return () => window.clearInterval(timer)
   }, [])
 
   async function add(event: FormEvent) {
@@ -69,7 +75,7 @@ export default function AmisPage() {
           <li key={row.friendshipId}>
             {row.status === 'accepted' ? (
               <div className="flex items-center gap-3 rounded-2xl bg-panel px-4 py-3">
-                <PlayerAvatar avatar="drop" photoData={row.user.photoData} size={40} className="shrink-0" />
+                <PresenceAvatar photoData={row.user.photoData} lastSeenAt={row.user.lastSeenAt} size={40} />
                 <Link href={`/profil/${row.user.friendCode}`} className="min-w-0 flex-1">
                   <p className="font-semibold">{row.user.name}</p>
                   <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
@@ -86,7 +92,7 @@ export default function AmisPage() {
             ) : (
               <div className="flex items-center justify-between gap-3 rounded-2xl bg-panel px-4 py-3">
                 <div className="flex min-w-0 items-center gap-3">
-                  <PlayerAvatar avatar="drop" photoData={row.user.photoData} size={40} className="shrink-0" />
+                  <PresenceAvatar photoData={row.user.photoData} lastSeenAt={row.user.lastSeenAt} size={40} />
                   <div>
                     <p className="font-semibold">{row.user.name}</p>
                     <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>

@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { PresenceAvatar } from '@/components/presence-avatar'
 import { sortCareers, type Career, type CareerSort } from '@/lib/career'
 import { type SeasonRange } from '@/lib/season'
-import { PlayerAvatar } from '@/components/avatar'
 
-type Row = Career & { netLabel: string; photoData?: string | null }
+type Row = Career & { netLabel: string; photoData?: string | null; lastSeenAt?: string | null }
 
 const SORTS: { id: CareerSort; label: string }[] = [
   { id: 'points', label: 'PTS' },
@@ -36,16 +36,24 @@ export default function ClassementPage() {
   }).format(new Date())
 
   useEffect(() => {
-    void fetch(`/api/classement?range=${range}`)
-      .then(async (response) => {
-        const data = await response.json()
-        if (!response.ok) {
-          setError(data.error ?? 'Connecte-toi')
-          return
-        }
-        setMeId(data.meId)
-        setRows(data.rows)
-      })
+    async function load() {
+      const response = await fetch(`/api/classement?range=${range}`, { cache: 'no-store' })
+      const data = await response.json()
+      if (!response.ok) {
+        setError(data.error ?? 'Connecte-toi')
+        return
+      }
+      setError('')
+      setMeId(data.meId)
+      setRows(data.rows)
+    }
+    void load()
+    const timer = window.setInterval(() => {
+      if (!document.hidden) {
+        void load()
+      }
+    }, 4000)
+    return () => window.clearInterval(timer)
   }, [range])
 
   const ranked = useMemo(() => sortCareers(rows, sort), [rows, sort])
@@ -113,7 +121,7 @@ export default function ClassementPage() {
                 >
                   {index + 1}
                 </span>
-                <PlayerAvatar avatar="drop" photoData={row.photoData} size={40} className="shrink-0" />
+                <PresenceAvatar photoData={row.photoData} lastSeenAt={row.lastSeenAt} size={40} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold">
                     {row.name}

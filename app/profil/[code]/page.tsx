@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { CareerGrid } from '@/components/career-grid'
-import { PlayerAvatar } from '@/components/avatar'
+import { PresenceAvatar } from '@/components/presence-avatar'
+import { isPlayerLive } from '@/lib/presence'
 
 type Profile = {
   isSelf: boolean
   friendshipId: string | null
-  user: { name: string; friendCode: string; photoData?: string | null }
+  user: { name: string; friendCode: string; photoData?: string | null; lastSeenAt?: string | null }
   kills: number
   revives: number
   points: number
@@ -29,19 +30,26 @@ export default function FriendProfilPage() {
   const [pending, setPending] = useState(false)
 
   useEffect(() => {
-    void fetch(`/api/joueurs/${params.code}`)
-      .then(async (response) => {
-        const data = await response.json()
-        if (!response.ok) {
-          setError(data.error ?? 'Profil introuvable')
-          return
-        }
-        if (data.isSelf) {
-          router.replace('/profil')
-          return
-        }
-        setProfile(data)
-      })
+    async function load() {
+      const response = await fetch(`/api/joueurs/${params.code}`, { cache: 'no-store' })
+      const data = await response.json()
+      if (!response.ok) {
+        setError(data.error ?? 'Profil introuvable')
+        return
+      }
+      if (data.isSelf) {
+        router.replace('/profil')
+        return
+      }
+      setProfile(data)
+    }
+    void load()
+    const timer = window.setInterval(() => {
+      if (!document.hidden) {
+        void load()
+      }
+    }, 4000)
+    return () => window.clearInterval(timer)
   }, [params.code, router])
 
   if (error && !profile) {
@@ -62,10 +70,11 @@ export default function FriendProfilPage() {
     <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 py-8">
       <p className="font-hud text-[11px] tracking-[0.35em] text-horizon">PROFIL AMI</p>
       <div className="flex items-center gap-4">
-        <PlayerAvatar avatar="drop" photoData={profile.user.photoData} size={72} />
+        <PresenceAvatar photoData={profile.user.photoData} lastSeenAt={profile.user.lastSeenAt} size={72} />
         <div>
           <h1 className="font-display text-5xl">{profile.user.name}</h1>
           <p className="font-hud tracking-[0.25em] text-gold">ID {profile.user.friendCode}</p>
+          {isPlayerLive(profile.user.lastSeenAt) ? <p className="text-sm text-rez">En ligne</p> : null}
         </div>
       </div>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}

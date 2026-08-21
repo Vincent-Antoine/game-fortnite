@@ -3,13 +3,18 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { PlayerAvatar } from '@/components/avatar'
+import { PresenceAvatar } from '@/components/presence-avatar'
 
 type Message = { id: string; fromMe: boolean; body: string; createdAt: string }
 
 export default function FriendChatPage() {
   const params = useParams<{ code: string }>()
-  const [friend, setFriend] = useState<{ name: string; friendCode: string; photoData?: string | null } | null>(null)
+  const [friend, setFriend] = useState<{
+    name: string
+    friendCode: string
+    photoData?: string | null
+    lastSeenAt?: string | null
+  } | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
@@ -85,7 +90,9 @@ export default function FriendChatPage() {
       <p className="font-hud text-[11px] tracking-[0.35em] text-horizon">MESSAGE</p>
       <div className="flex items-end justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          {friend ? <PlayerAvatar avatar="drop" photoData={friend.photoData} size={48} className="shrink-0" /> : null}
+          {friend ? (
+            <PresenceAvatar photoData={friend.photoData} lastSeenAt={friend.lastSeenAt} size={48} />
+          ) : null}
           <h1 className="font-display text-5xl">{friend?.name ?? '…'}</h1>
         </div>
         {friend ? (

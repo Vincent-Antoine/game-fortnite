@@ -10,6 +10,7 @@ export type AuthUser = {
   name: string
   friendCode: string
   photoData: string | null
+  lastSeenAt: string | null
 }
 
 export function hashToken(token: string): string {
@@ -51,7 +52,14 @@ export async function getAuthUser(): Promise<AuthUser | null> {
   if (!user) {
     return null
   }
-  return { id: user.id, email: user.email, name: user.name, friendCode: user.friendCode, photoData: user.photoData }
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    friendCode: user.friendCode,
+    photoData: user.photoData,
+    lastSeenAt: user.lastSeenAt ? user.lastSeenAt.toISOString() : null,
+  }
 }
 
 export function newToken(): string {

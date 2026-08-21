@@ -25,7 +25,8 @@ export function AppChrome() {
   const [open, setOpen] = useState(false)
 
   async function load() {
-    const response = await fetch('/api/me', { cache: 'no-store' })
+    const live = typeof document !== 'undefined' && !document.hidden
+    const response = await fetch(live ? '/api/me?live=1' : '/api/me', { cache: 'no-store' })
     if (!response.ok) {
       return
     }
@@ -35,7 +36,16 @@ export function AppChrome() {
   useEffect(() => {
     void load()
     const timer = window.setInterval(() => void load(), 4000)
-    return () => window.clearInterval(timer)
+    const onVis = () => {
+      if (!document.hidden) {
+        void load()
+      }
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVis)
+    }
   }, [])
 
   const unread = me.notifications.length

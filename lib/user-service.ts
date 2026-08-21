@@ -97,14 +97,31 @@ async function createLogin(userId: string) {
   await setUserCookie(row.id, token)
 }
 
-function publicUser(user: { id: string; email: string; name: string; friendCode: string; photoData?: string | null }) {
+function publicUser(user: {
+  id: string
+  email: string
+  name: string
+  friendCode: string
+  photoData?: string | null
+  lastSeenAt?: Date | string | null
+}) {
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     friendCode: user.friendCode,
     photoData: user.photoData ?? null,
+    lastSeenAt: user.lastSeenAt
+      ? user.lastSeenAt instanceof Date
+        ? user.lastSeenAt.toISOString()
+        : user.lastSeenAt
+      : null,
   }
+}
+
+export async function touchUserPresence(userId: string) {
+  const db = getDb()
+  await db.update(users).set({ lastSeenAt: new Date() }).where(eq(users.id, userId))
 }
 
 export async function requireUser() {
@@ -206,7 +223,13 @@ export async function listFriends() {
       status: row.status,
       incoming: row.addresseeId === me.id && row.status === 'pending',
       unreadCount: unread.get(other.id) ?? 0,
-      user: { id: other.id, name: other.name, friendCode: other.friendCode, photoData: other.photoData },
+      user: {
+        id: other.id,
+        name: other.name,
+        friendCode: other.friendCode,
+        photoData: other.photoData,
+        lastSeenAt: other.lastSeenAt ? other.lastSeenAt.toISOString() : null,
+      },
     })
   }
   return { me, friends: result }
@@ -260,7 +283,13 @@ export async function listDirectMessages(friendCode: string) {
       ),
     )
   return {
-    friend: { id: other.id, name: other.name, friendCode: other.friendCode, photoData: other.photoData },
+    friend: {
+      id: other.id,
+      name: other.name,
+      friendCode: other.friendCode,
+      photoData: other.photoData,
+      lastSeenAt: other.lastSeenAt ? other.lastSeenAt.toISOString() : null,
+    },
     messages: rows
       .slice()
       .reverse()
@@ -404,7 +433,12 @@ export async function getPlayerProfile(friendCode: string) {
   return {
     isSelf,
     friendshipId,
-    user: { name: target.name, friendCode: target.friendCode, photoData: target.photoData },
+    user: {
+      name: target.name,
+      friendCode: target.friendCode,
+      photoData: target.photoData,
+      lastSeenAt: target.lastSeenAt ? target.lastSeenAt.toISOString() : null,
+    },
     ...withMoneyLabels(career),
     history: isSelf ? await sessionHistoryForUser(target.id) : [],
   }
@@ -413,14 +447,16 @@ export async function getPlayerProfile(friendCode: string) {
 export async function friendLeaderboard(range: SeasonRange = 'month') {
   const { me, friends } = await listFriends()
   const people = [
-    { id: me.id, name: me.name, friendCode: me.friendCode, photoData: me.photoData },
+    { id: me.id, name: me.name, friendCode: me.friendCode, photoData: me.photoData, lastSeenAt: me.lastSeenAt },
     ...friends.filter((row) => row.status === 'accepted').map((row) => row.user),
   ]
   const { from } = seasonWindow(range)
   const photos = new Map(people.map((row) => [row.id, row.photoData ?? null]))
+  const presence = new Map(people.map((row) => [row.id, row.lastSeenAt ?? null]))
   const rows = sortCareers(await careersForUsers(people, from), 'points').map((row) => ({
     ...withMoneyLabels(row),
     photoData: photos.get(row.userId) ?? null,
+    lastSeenAt: presence.get(row.userId) ?? null,
   }))
   return { meId: me.id, range, rows }
 }
