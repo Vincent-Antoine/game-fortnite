@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { sortCareers, type Career, type CareerSort } from '@/lib/career'
 import { type SeasonRange } from '@/lib/season'
+import { PlayerAvatar } from '@/components/avatar'
 
-type Row = Career & { netLabel: string }
+type Row = Career & { netLabel: string; photoData?: string | null }
 
 const SORTS: { id: CareerSort; label: string }[] = [
   { id: 'points', label: 'PTS' },
@@ -112,6 +113,7 @@ export default function ClassementPage() {
                 >
                   {index + 1}
                 </span>
+                <PlayerAvatar avatar="drop" photoData={row.photoData} size={40} className="shrink-0" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold">
                     {row.name}

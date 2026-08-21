@@ -8,6 +8,7 @@ import { getDb } from '@/lib/db'
 import { gamePowers, games, players, scores, sessionPings, sessions, transfers } from '@/lib/db/schema'
 import { ApiError } from '@/lib/errors'
 import { notifyUser } from '@/lib/notify'
+import { sanitizePhoto } from '@/lib/photo'
 import { settleGame, simplifyDebts, netBalances, type PowerKind, type PowerUse, type Transfer } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
 
@@ -21,16 +22,6 @@ function sanitizeName(name: string): string {
     throw new ApiError(400, 'Pseudo entre 1 et 20 caractères')
   }
   return cleaned
-}
-
-function sanitizePhoto(value: unknown): string | null {
-  if (!value) {
-    return null
-  }
-  if (typeof value !== 'string' || !value.startsWith('data:image/') || value.length > 180000) {
-    throw new ApiError(400, 'Photo trop lourde (max ~100 Ko)')
-  }
-  return value
 }
 
 function clampStat(value: unknown): number {
@@ -588,11 +579,9 @@ export async function setPlayerPhoto(input: {
   photoData: string | null
 }): Promise<SessionDTO> {
   const session = await requireOpenSession(input.code)
-  if (input.photoData && (input.photoData.length > 180000 || !input.photoData.startsWith('data:image/'))) {
-    throw new ApiError(400, 'Photo trop lourde (max ~100 Ko)')
-  }
+  const photoData = sanitizePhoto(input.photoData)
   const db = getDb()
-  await db.update(players).set({ photoData: input.photoData }).where(eq(players.id, input.playerId))
+  await db.update(players).set({ photoData }).where(eq(players.id, input.playerId))
   return getSessionDto(session.code, null)
 }
 

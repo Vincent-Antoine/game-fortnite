@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { CareerGrid } from '@/components/career-grid'
+import { PlayerAvatar } from '@/components/avatar'
 
 type Profile = {
   isSelf: boolean
   friendshipId: string | null
-  user: { name: string; friendCode: string }
+  user: { name: string; friendCode: string; photoData?: string | null }
   kills: number
   revives: number
   points: number
@@ -60,8 +61,13 @@ export default function FriendProfilPage() {
   return (
     <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 py-8">
       <p className="font-hud text-[11px] tracking-[0.35em] text-horizon">PROFIL AMI</p>
-      <h1 className="font-display text-5xl">{profile.user.name}</h1>
-      <p className="font-hud tracking-[0.25em] text-gold">ID {profile.user.friendCode}</p>
+      <div className="flex items-center gap-4">
+        <PlayerAvatar avatar="drop" photoData={profile.user.photoData} size={72} />
+        <div>
+          <h1 className="font-display text-5xl">{profile.user.name}</h1>
+          <p className="font-hud tracking-[0.25em] text-gold">ID {profile.user.friendCode}</p>
+        </div>
+      </div>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
       <CareerGrid stats={profile} />
       {profile.friendshipId ? (

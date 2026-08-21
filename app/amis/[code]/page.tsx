@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import { PlayerAvatar } from '@/components/avatar'
 
 type Message = { id: string; fromMe: boolean; body: string; createdAt: string }
 
 export default function FriendChatPage() {
   const params = useParams<{ code: string }>()
-  const [friend, setFriend] = useState<{ name: string; friendCode: string } | null>(null)
+  const [friend, setFriend] = useState<{ name: string; friendCode: string; photoData?: string | null } | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
@@ -83,7 +84,10 @@ export default function FriendChatPage() {
     <main className="mx-auto flex w-full max-w-md flex-col gap-4 px-5 py-8">
       <p className="font-hud text-[11px] tracking-[0.35em] text-horizon">MESSAGE</p>
       <div className="flex items-end justify-between gap-3">
-        <h1 className="font-display text-5xl">{friend?.name ?? '…'}</h1>
+        <div className="flex min-w-0 items-center gap-3">
+          {friend ? <PlayerAvatar avatar="drop" photoData={friend.photoData} size={48} className="shrink-0" /> : null}
+          <h1 className="font-display text-5xl">{friend?.name ?? '…'}</h1>
+        </div>
         {friend ? (
           <Link href={`/profil/${friend.friendCode}`} className="text-sm text-horizon underline">
             Profil

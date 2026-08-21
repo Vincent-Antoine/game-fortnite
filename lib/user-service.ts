@@ -18,6 +18,7 @@ import {
   directMessages,
 } from '@/lib/db/schema'
 import { sanitizeMessage } from '@/lib/chat'
+import { sanitizePhoto } from '@/lib/photo'
 import { emptyCareer, personalRecords, sortCareers, withMoneyLabels, type Career, type GameRecord } from '@/lib/career'
 import { notifyUser } from '@/lib/notify'
 import { seasonWindow, type SeasonRange } from '@/lib/season'
@@ -96,8 +97,14 @@ async function createLogin(userId: string) {
   await setUserCookie(row.id, token)
 }
 
-function publicUser(user: { id: string; email: string; name: string; friendCode: string }) {
-  return { id: user.id, email: user.email, name: user.name, friendCode: user.friendCode }
+function publicUser(user: { id: string; email: string; name: string; friendCode: string; photoData?: string | null }) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    friendCode: user.friendCode,
+    photoData: user.photoData ?? null,
+  }
 }
 
 export async function requireUser() {
@@ -199,7 +206,7 @@ export async function listFriends() {
       status: row.status,
       incoming: row.addresseeId === me.id && row.status === 'pending',
       unreadCount: unread.get(other.id) ?? 0,
-      user: { id: other.id, name: other.name, friendCode: other.friendCode },
+      user: { id: other.id, name: other.name, friendCode: other.friendCode, photoData: other.photoData },
     })
   }
   return { me, friends: result }
@@ -253,7 +260,7 @@ export async function listDirectMessages(friendCode: string) {
       ),
     )
   return {
-    friend: { id: other.id, name: other.name, friendCode: other.friendCode },
+    friend: { id: other.id, name: other.name, friendCode: other.friendCode, photoData: other.photoData },
     messages: rows
       .slice()
       .reverse()
@@ -366,6 +373,14 @@ export async function profileStats() {
   }
 }
 
+export async function setAccountPhoto(photoData: string | null) {
+  const me = await requireUser()
+  const cleaned = sanitizePhoto(photoData)
+  const db = getDb()
+  await db.update(users).set({ photoData: cleaned }).where(eq(users.id, me.id))
+  return { photoData: cleaned }
+}
+
 export async function getPlayerProfile(friendCode: string) {
   const me = await requireUser()
   const code = normalizeCode(friendCode)
@@ -389,7 +404,7 @@ export async function getPlayerProfile(friendCode: string) {
   return {
     isSelf,
     friendshipId,
-    user: { name: target.name, friendCode: target.friendCode },
+    user: { name: target.name, friendCode: target.friendCode, photoData: target.photoData },
     ...withMoneyLabels(career),
     history: isSelf ? await sessionHistoryForUser(target.id) : [],
   }
@@ -398,11 +413,15 @@ export async function getPlayerProfile(friendCode: string) {
 export async function friendLeaderboard(range: SeasonRange = 'month') {
   const { me, friends } = await listFriends()
   const people = [
-    { id: me.id, name: me.name, friendCode: me.friendCode },
+    { id: me.id, name: me.name, friendCode: me.friendCode, photoData: me.photoData },
     ...friends.filter((row) => row.status === 'accepted').map((row) => row.user),
   ]
   const { from } = seasonWindow(range)
-  const rows = sortCareers(await careersForUsers(people, from), 'points').map(withMoneyLabels)
+  const photos = new Map(people.map((row) => [row.id, row.photoData ?? null]))
+  const rows = sortCareers(await careersForUsers(people, from), 'points').map((row) => ({
+    ...withMoneyLabels(row),
+    photoData: photos.get(row.userId) ?? null,
+  }))
   return { meId: me.id, range, rows }
 }
 

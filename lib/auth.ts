@@ -9,6 +9,7 @@ export type AuthUser = {
   email: string
   name: string
   friendCode: string
+  photoData: string | null
 }
 
 export function hashToken(token: string): string {
@@ -50,7 +51,7 @@ export async function getAuthUser(): Promise<AuthUser | null> {
   if (!user) {
     return null
   }
-  return { id: user.id, email: user.email, name: user.name, friendCode: user.friendCode }
+  return { id: user.id, email: user.email, name: user.name, friendCode: user.friendCode, photoData: user.photoData }
 }
 
 export function newToken(): string {

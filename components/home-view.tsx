@@ -28,6 +28,9 @@ export function HomeView() {
         if (data?.user?.name) {
           setName((current) => current || data.user.name)
         }
+        if (data?.user?.photoData) {
+          setPhotoData((current) => current ?? data.user.photoData)
+        }
       })
       .catch(() => undefined)
   }, [])

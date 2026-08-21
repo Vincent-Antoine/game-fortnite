@@ -17,7 +17,7 @@ export function SessionView({ code }: Props) {
   const [session, setSession] = useState<SessionDTO | null>(null)
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
-  const [meUser, setMeUser] = useState<{ name: string } | null>(null)
+  const [meUser, setMeUser] = useState<{ name: string; photoData: string | null } | null>(null)
   const [joinName, setJoinName] = useState('')
   const [joinAvatar, setJoinAvatar] = useState('drop')
   const [joinPhoto, setJoinPhoto] = useState<string | null>(null)
@@ -98,6 +98,9 @@ export function SessionView({ code }: Props) {
         if (data?.user) {
           setMeUser(data.user)
           setJoinName(data.user.name)
+          if (data.user.photoData) {
+            setJoinPhoto((current) => current ?? data.user.photoData)
+          }
         }
       })
       .catch(() => undefined)

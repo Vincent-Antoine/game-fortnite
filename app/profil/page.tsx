@@ -4,10 +4,11 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { CareerGrid } from '@/components/career-grid'
+import { PhotoPicker } from '@/components/photo-picker'
 import { PushToggle } from '@/components/push-toggle'
 
 type Stats = {
-  me: { name: string; friendCode: string; email: string }
+  me: { name: string; friendCode: string; email: string; photoData: string | null }
   games: number
   sessions: number
   kills: number
@@ -28,6 +29,7 @@ export default function ProfilPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [error, setError] = useState('')
   const [pendingCode, setPendingCode] = useState('')
+  const [photoPending, setPhotoPending] = useState(false)
 
   async function load() {
     const response = await fetch('/api/profil')
@@ -66,6 +68,35 @@ export default function ProfilPage() {
     }
   }
 
+  async function savePhoto(photoData: string | null) {
+    if (!stats) {
+      return
+    }
+    const previous = stats.me.photoData
+    setStats({ ...stats, me: { ...stats.me, photoData } })
+    setPhotoPending(true)
+    setError('')
+    try {
+      const response = await fetch('/api/profil/photo', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoData }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Photo impossible')
+      }
+      setStats((current) =>
+        current ? { ...current, me: { ...current.me, photoData: data.photoData } } : current,
+      )
+    } catch (err) {
+      setStats((current) => (current ? { ...current, me: { ...current.me, photoData: previous } } : current))
+      setError(err instanceof Error ? err.message : 'Erreur')
+    } finally {
+      setPhotoPending(false)
+    }
+  }
+
   if (error && !stats) {
     return (
       <main className="mx-auto w-full max-w-md px-5 py-8">
@@ -83,6 +114,15 @@ export default function ProfilPage() {
       <p className="font-hud tracking-[0.25em] text-gold">ID {stats.me.friendCode}</p>
       <p className="text-sm text-mute">Donne cet ID à tes potes pour t’ajouter. Tes kills et réas restent sur ce profil.</p>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
+      <PhotoPicker
+        value={stats.me.photoData}
+        onChange={(photoData) => {
+          if (!photoPending) {
+            void savePhoto(photoData)
+          }
+        }}
+        hint="Sur ton compte. Elle sera préremplie quand tu crées ou rejoins une session."
+      />
       <PushToggle />
       <CareerGrid stats={stats} />
       <Link href="/classement" className="text-sm text-horizon underline">

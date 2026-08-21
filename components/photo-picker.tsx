@@ -5,9 +5,11 @@ import { compressPhoto } from '@/lib/compress-photo'
 export function PhotoPicker({
   value,
   onChange,
+  hint = 'Comme l’avatar, pour cette session seulement.',
 }: {
   value: string | null
   onChange: (value: string | null) => void
+  hint?: string
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -35,7 +37,7 @@ export function PhotoPicker({
           />
         </label>
         <div className="text-sm text-mute">
-          <p>Comme l’avatar, pour cette session seulement.</p>
+          <p>{hint}</p>
           {value ? (
             <button type="button" className="mt-1 text-kill underline" onClick={() => onChange(null)}>
               Retirer

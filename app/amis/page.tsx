@@ -2,13 +2,14 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
+import { PlayerAvatar } from '@/components/avatar'
 
 type FriendRow = {
   friendshipId: string
   status: string
   incoming: boolean
   unreadCount?: number
-  user: { id: string; name: string; friendCode: string }
+  user: { id: string; name: string; friendCode: string; photoData?: string | null }
 }
 
 export default function AmisPage() {
@@ -68,6 +69,7 @@ export default function AmisPage() {
           <li key={row.friendshipId}>
             {row.status === 'accepted' ? (
               <div className="flex items-center gap-3 rounded-2xl bg-panel px-4 py-3">
+                <PlayerAvatar avatar="drop" photoData={row.user.photoData} size={40} className="shrink-0" />
                 <Link href={`/profil/${row.user.friendCode}`} className="min-w-0 flex-1">
                   <p className="font-semibold">{row.user.name}</p>
                   <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
@@ -82,10 +84,13 @@ export default function AmisPage() {
                 </Link>
               </div>
             ) : (
-              <div className="flex items-center justify-between rounded-2xl bg-panel px-4 py-3">
-                <div>
-                  <p className="font-semibold">{row.user.name}</p>
-                  <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
+              <div className="flex items-center justify-between gap-3 rounded-2xl bg-panel px-4 py-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <PlayerAvatar avatar="drop" photoData={row.user.photoData} size={40} className="shrink-0" />
+                  <div>
+                    <p className="font-semibold">{row.user.name}</p>
+                    <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
+                  </div>
                 </div>
                 {row.incoming ? (
                   <div className="flex shrink-0 gap-2">
