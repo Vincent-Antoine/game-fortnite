@@ -160,6 +160,17 @@ export async function acceptFriend(friendshipId: string) {
   return listFriends()
 }
 
+export async function removeFriend(friendshipId: string) {
+  const me = await requireUser()
+  const db = getDb()
+  const [row] = await db.select().from(friendships).where(eq(friendships.id, friendshipId)).limit(1)
+  if (!row || (row.requesterId !== me.id && row.addresseeId !== me.id)) {
+    throw new ApiError(404, 'Ami introuvable')
+  }
+  await db.delete(friendships).where(eq(friendships.id, row.id))
+  return { ok: true }
+}
+
 export async function listFriends() {
   const me = await requireUser()
   const db = getDb()
@@ -260,18 +271,21 @@ export async function getPlayerProfile(friendCode: string) {
     throw new ApiError(404, 'Profil introuvable')
   }
   const isSelf = target.id === me.id
+  let friendshipId: string | null = null
   if (!isSelf) {
     const { friends } = await listFriends()
-    const ok = friends.some((row) => row.status === 'accepted' && row.user.id === target.id)
-    if (!ok) {
+    const relation = friends.find((row) => row.status === 'accepted' && row.user.id === target.id)
+    if (!relation) {
       throw new ApiError(403, 'Profil réservé à tes amis')
     }
+    friendshipId = relation.friendshipId
   }
   const [career] = await careersForUsers([
     { id: target.id, name: target.name, friendCode: target.friendCode },
   ])
   return {
     isSelf,
+    friendshipId,
     user: { name: target.name, friendCode: target.friendCode },
     ...withMoneyLabels(career),
     history: isSelf ? await sessionHistoryForUser(target.id) : [],

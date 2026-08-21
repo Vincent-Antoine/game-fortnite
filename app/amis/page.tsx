@@ -64,32 +64,42 @@ export default function AmisPage() {
       {error ? <p className="text-kill">{error}</p> : null}
       <ul className="flex flex-col gap-2">
         {friends.map((row) => (
-          <li key={row.friendshipId} className="flex items-center justify-between rounded-2xl bg-panel px-4 py-3">
-            <div>
-              {row.status === 'accepted' ? (
-                <Link href={`/profil/${row.user.friendCode}`} className="font-semibold">
-                  {row.user.name}
-                </Link>
-              ) : (
-                <p className="font-semibold">{row.user.name}</p>
-              )}
-              <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
-            </div>
-            {row.incoming ? (
-              <button
-                className="rounded-full bg-horizon px-3 py-1 text-sm text-dusk"
-                onClick={async () => {
-                  const response = await fetch(`/api/friends/${row.friendshipId}/accept`, { method: 'POST' })
-                  const data = await response.json()
-                  if (response.ok) {
-                    setFriends(data.friends)
-                  }
-                }}
+          <li key={row.friendshipId}>
+            {row.status === 'accepted' ? (
+              <Link
+                href={`/profil/${row.user.friendCode}`}
+                className="flex items-center justify-between rounded-2xl bg-panel px-4 py-3"
               >
-                Accepter
-              </button>
+                <div>
+                  <p className="font-semibold">{row.user.name}</p>
+                  <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
+                </div>
+                <span className="text-sm text-mute">Ami</span>
+              </Link>
             ) : (
-              <span className="text-sm text-mute">{row.status === 'accepted' ? 'Ami' : 'En attente'}</span>
+              <div className="flex items-center justify-between rounded-2xl bg-panel px-4 py-3">
+                <div>
+                  <p className="font-semibold">{row.user.name}</p>
+                  <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
+                </div>
+                {row.incoming ? (
+                  <button
+                    type="button"
+                    className="rounded-full bg-horizon px-3 py-1 text-sm text-dusk"
+                    onClick={async () => {
+                      const response = await fetch(`/api/friends/${row.friendshipId}/accept`, { method: 'POST' })
+                      const data = await response.json()
+                      if (response.ok) {
+                        setFriends(data.friends)
+                      }
+                    }}
+                  >
+                    Accepter
+                  </button>
+                ) : (
+                  <span className="text-sm text-mute">En attente</span>
+                )}
+              </div>
             )}
           </li>
         ))}
