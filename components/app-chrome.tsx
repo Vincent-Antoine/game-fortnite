@@ -12,10 +12,10 @@ type Me = {
 }
 
 const TABS = [
-  { href: '/', label: 'Accueil' },
-  { href: '/amis', label: 'Amis' },
-  { href: '/classement', label: 'Classement' },
-  { href: '/profil', label: 'Profil' },
+  { href: '/', label: 'Accueil', icon: HomeIcon },
+  { href: '/amis', label: 'Amis', icon: FriendsIcon },
+  { href: '/classement', label: 'Classement', icon: RankIcon },
+  { href: '/profil', label: 'Profil', icon: ProfileIcon },
 ]
 
 export function AppChrome() {
@@ -123,17 +123,21 @@ export function AppChrome() {
         ) : null}
       </header>
       {me.user ? (
-        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-dusk/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
+        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-dusk/95 pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-md">
           <div className="mx-auto grid max-w-md grid-cols-4">
             {TABS.map((tab) => {
               const active = tab.href === '/' ? path === '/' : path.startsWith(tab.href)
+              const Icon = tab.icon
               return (
                 <Link
                   key={tab.href}
                   href={tab.href}
-                  className={`py-3 text-center text-xs ${active ? 'text-horizon' : 'text-mute'}`}
+                  className={`flex min-h-[4.25rem] flex-col items-center justify-center gap-1 pt-2 ${
+                    active ? 'text-horizon' : 'text-mute'
+                  }`}
                 >
-                  {tab.label}
+                  <Icon />
+                  <span className="font-hud text-[11px] tracking-wide">{tab.label}</span>
                 </Link>
               )
             })}
@@ -141,6 +145,47 @@ export function AppChrome() {
         </nav>
       ) : null}
     </>
+  )
+}
+
+function HomeIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function FriendsIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="9" cy="8" r="3" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M4 19c.4-3 2.4-5 5-5s4.6 2 5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="17" cy="9" r="2.4" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M20.8 19c-.3-2.3-1.7-3.8-3.8-3.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function RankIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7 20V11h4v9H7Zm6 0V7h4v13h-4ZM3 20v-5h4v5H3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ProfileIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M5 20c.6-4 3.2-6 7-6s6.4 2 7 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
   )
 }
 

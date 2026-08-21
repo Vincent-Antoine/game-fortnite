@@ -257,7 +257,7 @@ export function SessionView({ code }: Props) {
   }
 
   return (
-    <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col gap-6 px-4 pb-28 pt-6">
+    <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col gap-6 px-4 pb-36 pt-6">
       <header className="flex items-start justify-between gap-3">
         <div>
           <p className="font-hud text-[11px] tracking-[0.35em] text-horizon">DETTE ROYALE</p>

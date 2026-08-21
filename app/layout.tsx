@@ -44,7 +44,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       lang="fr"
       className={`${outfit.variable} ${anton.variable} ${hud.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col pb-24">
+      <body className="min-h-full flex flex-col pb-32">
         <AppChrome />
         {children}
         <SwRegister />
