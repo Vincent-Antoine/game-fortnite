@@ -3,11 +3,16 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { CareerGrid } from '@/components/career-grid'
 
 type Stats = {
   me: { name: string; friendCode: string; email: string }
   games: number
   sessions: number
+  kills: number
+  revives: number
+  points: number
+  firstKills: number
   wonLabel: string
   lostLabel: string
   netLabel: string
@@ -72,26 +77,12 @@ export default function ProfilPage() {
     <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 py-8">
       <h1 className="font-display text-5xl">{stats.me.name}</h1>
       <p className="font-hud tracking-[0.25em] text-gold">ID {stats.me.friendCode}</p>
-      <p className="text-sm text-mute">Donne cet ID à tes potes pour t’ajouter.</p>
+      <p className="text-sm text-mute">Donne cet ID à tes potes pour t’ajouter. Tes kills et réas restent sur ce profil.</p>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
-      <div className="grid grid-cols-2 gap-3">
-        <article className="rounded-3xl bg-panel p-4">
-          <p className="font-hud text-xs text-rez">GAGNÉ</p>
-          <p className="font-display text-3xl">{stats.wonLabel}</p>
-        </article>
-        <article className="rounded-3xl bg-panel p-4">
-          <p className="font-hud text-xs text-kill">PERDU</p>
-          <p className="font-display text-3xl">{stats.lostLabel}</p>
-        </article>
-        <article className="rounded-3xl bg-panel p-4">
-          <p className="font-hud text-xs text-mute">NET</p>
-          <p className="font-display text-3xl">{stats.netLabel}</p>
-        </article>
-        <article className="rounded-3xl bg-panel p-4">
-          <p className="font-hud text-xs text-mute">GAMES</p>
-          <p className="font-display text-3xl">{stats.games}</p>
-        </article>
-      </div>
+      <CareerGrid stats={stats} />
+      <Link href="/classement" className="text-sm text-horizon underline">
+        Voir le classement
+      </Link>
       <section>
         <h2 className="font-hud text-xs tracking-[0.25em] text-mute">SESSIONS</h2>
         <ul className="mt-3 flex flex-col gap-2">

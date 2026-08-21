@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, type FormEvent } from 'react'
+import Link from 'next/link'
 
 type FriendRow = {
   friendshipId: string
@@ -65,7 +66,13 @@ export default function AmisPage() {
         {friends.map((row) => (
           <li key={row.friendshipId} className="flex items-center justify-between rounded-2xl bg-panel px-4 py-3">
             <div>
-              <p className="font-semibold">{row.user.name}</p>
+              {row.status === 'accepted' ? (
+                <Link href={`/profil/${row.user.friendCode}`} className="font-semibold">
+                  {row.user.name}
+                </Link>
+              ) : (
+                <p className="font-semibold">{row.user.name}</p>
+              )}
               <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
             </div>
             {row.incoming ? (

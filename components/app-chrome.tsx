@@ -55,7 +55,7 @@ export function AppChrome() {
       <Link href="/" className="font-hud text-[11px] tracking-[0.3em] text-horizon">
         DETTE ROYALE
       </Link>
-      <nav className="flex items-center gap-4 text-sm">
+      <nav className="flex flex-wrap items-center justify-end gap-3 text-sm">
         {me.user ? (
           <>
             <div className="relative">
@@ -104,6 +104,7 @@ export function AppChrome() {
               ) : null}
             </div>
             <Link href="/amis">Amis</Link>
+            <Link href="/classement">Classement</Link>
             <Link href="/profil">{me.user.name}</Link>
           </>
         ) : (

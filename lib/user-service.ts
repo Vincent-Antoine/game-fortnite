@@ -11,11 +11,12 @@ import {
   players,
   sessionInvites,
   sessions,
+  scores,
   transfers,
   userSessions,
   users,
 } from '@/lib/db/schema'
-import { formatCents } from '@/lib/money'
+import { emptyCareer, sortCareers, withMoneyLabels, type Career } from '@/lib/career'
 import { hashPassword, verifyPassword } from '@/lib/password'
 
 function sanitizeUserName(name: string): string {
@@ -241,13 +242,153 @@ export async function deleteNotificationsByHref(href: string) {
 
 export async function profileStats() {
   const me = await requireUser()
+  const [career] = await careersForUsers([
+    { id: me.id, name: me.name, friendCode: me.friendCode },
+  ])
+  return {
+    me,
+    ...withMoneyLabels(career),
+    history: await sessionHistoryForUser(me.id),
+  }
+}
+
+export async function getPlayerProfile(friendCode: string) {
+  const me = await requireUser()
+  const code = normalizeCode(friendCode)
+  const [target] = await dbUserByFriendCode(code)
+  if (!target) {
+    throw new ApiError(404, 'Profil introuvable')
+  }
+  const isSelf = target.id === me.id
+  if (!isSelf) {
+    const { friends } = await listFriends()
+    const ok = friends.some((row) => row.status === 'accepted' && row.user.id === target.id)
+    if (!ok) {
+      throw new ApiError(403, 'Profil réservé à tes amis')
+    }
+  }
+  const [career] = await careersForUsers([
+    { id: target.id, name: target.name, friendCode: target.friendCode },
+  ])
+  return {
+    isSelf,
+    user: { name: target.name, friendCode: target.friendCode },
+    ...withMoneyLabels(career),
+    history: isSelf ? await sessionHistoryForUser(target.id) : [],
+  }
+}
+
+export async function friendLeaderboard() {
+  const { me, friends } = await listFriends()
+  const people = [
+    { id: me.id, name: me.name, friendCode: me.friendCode },
+    ...friends.filter((row) => row.status === 'accepted').map((row) => row.user),
+  ]
+  const rows = sortCareers(await careersForUsers(people), 'points').map(withMoneyLabels)
+  return { meId: me.id, rows }
+}
+
+async function dbUserByFriendCode(code: string) {
   const db = getDb()
-  const myPlayers = await db.select().from(players).where(eq(players.userId, me.id))
+  return db.select().from(users).where(eq(users.friendCode, code)).limit(1)
+}
+
+async function careersForUsers(
+  people: { id: string; name: string; friendCode: string }[],
+): Promise<Career[]> {
+  const result = people.map(emptyCareer)
+  if (people.length === 0) {
+    return result
+  }
+  const db = getDb()
+  const byId = new Map(result.map((row) => [row.userId, row]))
+  const roster = await db.select().from(players).where(inArray(players.userId, people.map((row) => row.id)))
+  const userByPlayer = new Map<string, string>()
+  for (const person of people) {
+    const mine = roster.filter((player) => player.userId === person.id)
+    const row = byId.get(person.id)
+    if (row) {
+      row.sessions = new Set(mine.map((player) => player.sessionId)).size
+    }
+  }
+  for (const player of roster) {
+    if (player.userId) {
+      userByPlayer.set(player.id, player.userId)
+    }
+  }
+  const sessionIds = [...new Set(roster.map((player) => player.sessionId))]
+  if (sessionIds.length === 0) {
+    return result
+  }
+  const closed = await db
+    .select()
+    .from(games)
+    .where(and(inArray(games.sessionId, sessionIds), eq(games.status, 'closed')))
+  if (closed.length === 0) {
+    return result
+  }
+  const gameIds = closed.map((game) => game.id)
+  const allScores = await db.select().from(scores).where(inArray(scores.gameId, gameIds))
+  const allTransfers = await db.select().from(transfers).where(inArray(transfers.gameId, gameIds))
+  const gamesByUser = new Map<string, Set<string>>()
+
+  for (const score of allScores) {
+    const userId = userByPlayer.get(score.playerId)
+    if (!userId) {
+      continue
+    }
+    const row = byId.get(userId)
+    if (!row) {
+      continue
+    }
+    row.kills += score.kills
+    row.revives += score.revives
+    const set = gamesByUser.get(userId) ?? new Set<string>()
+    set.add(score.gameId)
+    gamesByUser.set(userId, set)
+  }
+
+  for (const game of closed) {
+    if (!game.firstKillPlayerId) {
+      continue
+    }
+    const userId = userByPlayer.get(game.firstKillPlayerId)
+    const row = userId ? byId.get(userId) : undefined
+    if (row) {
+      row.firstKills += 1
+    }
+  }
+
+  for (const transfer of allTransfers) {
+    const toUser = userByPlayer.get(transfer.toPlayerId)
+    const fromUser = userByPlayer.get(transfer.fromPlayerId)
+    if (toUser) {
+      const row = byId.get(toUser)
+      if (row) {
+        row.wonCents += transfer.amountCents
+      }
+    }
+    if (fromUser) {
+      const row = byId.get(fromUser)
+      if (row) {
+        row.lostCents += transfer.amountCents
+      }
+    }
+  }
+
+  for (const row of result) {
+    row.games = gamesByUser.get(row.userId)?.size ?? 0
+    row.points = row.kills + row.revives
+    row.netCents = row.wonCents - row.lostCents
+  }
+  return result
+}
+
+async function sessionHistoryForUser(userId: string) {
+  const db = getDb()
+  const myPlayers = await db.select().from(players).where(eq(players.userId, userId))
   const playerIds = new Set(myPlayers.map((row) => row.id))
   const sessionIds = [...new Set(myPlayers.map((row) => row.sessionId))]
-  let won = 0
-  let lost = 0
-  let gameCount = 0
   const history: { code: string; wonCents: number; lostCents: number; games: number; isHost: boolean }[] = []
 
   for (const sessionId of sessionIds) {
@@ -256,8 +397,10 @@ export async function profileStats() {
       continue
     }
     const sessionPlayers = myPlayers.filter((row) => row.sessionId === sessionId)
-    const sessionGames = await db.select().from(games).where(and(eq(games.sessionId, sessionId), eq(games.status, 'closed')))
-    gameCount += sessionGames.length
+    const sessionGames = await db
+      .select()
+      .from(games)
+      .where(and(eq(games.sessionId, sessionId), eq(games.status, 'closed')))
     let sessionWon = 0
     let sessionLost = 0
     for (const game of sessionGames) {
@@ -265,11 +408,9 @@ export async function profileStats() {
       for (const row of rows) {
         if (playerIds.has(row.toPlayerId) && sessionPlayers.some((player) => player.id === row.toPlayerId)) {
           sessionWon += row.amountCents
-          won += row.amountCents
         }
         if (playerIds.has(row.fromPlayerId) && sessionPlayers.some((player) => player.id === row.fromPlayerId)) {
           sessionLost += row.amountCents
-          lost += row.amountCents
         }
       }
     }
@@ -282,18 +423,7 @@ export async function profileStats() {
     })
   }
 
-  return {
-    me,
-    games: gameCount,
-    sessions: sessionIds.length,
-    wonCents: won,
-    lostCents: lost,
-    netCents: won - lost,
-    wonLabel: formatCents(won),
-    lostLabel: formatCents(lost),
-    netLabel: formatCents(won - lost),
-    history,
-  }
+  return history
 }
 
 export async function removeSessionFromProfile(code: string) {
