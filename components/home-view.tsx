@@ -42,7 +42,7 @@ export function HomeView() {
     try {
       if (mode === 'create') {
         if (stakeCents === null) {
-          throw new Error('Mise entre 0,01 € et 50 €')
+          throw new Error('Mise entre 0 € et 50 €')
         }
         const response = await fetch('/api/sessions', {
           method: 'POST',
@@ -134,6 +134,7 @@ export function HomeView() {
               />
               <span className="text-mute">€</span>
             </div>
+            <p className="text-xs text-mute">0 € = parties gratuites</p>
           </label>
         ) : (
           <label className="flex flex-col gap-2">

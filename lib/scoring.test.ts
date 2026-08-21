@@ -165,6 +165,19 @@ describe('pouvoirs', () => {
     ])
   })
 
+  it('ne crée pas de dette si la mise est à 0 €', () => {
+    expect(
+      settleGame({
+        scores: [
+          { playerId: brandon, kills: 5, revives: 0 },
+          { playerId: vincent, kills: 0, revives: 0 },
+        ],
+        firstKillPlayerId: null,
+        stakeCents: 0,
+      }),
+    ).toEqual([])
+  })
+
   it('le bouclier fait payer le 2e au lieu du dernier', () => {
     const result = settleGame({
       scores: [

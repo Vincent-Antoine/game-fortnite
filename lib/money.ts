@@ -8,8 +8,11 @@ export function formatCents(cents: number): string {
 
 export function parseStakeToCents(value: string): number | null {
   const normalized = value.replace(',', '.').trim()
+  if (!normalized) {
+    return null
+  }
   const euros = Number(normalized)
-  if (!Number.isFinite(euros) || euros < 0.01 || euros > 50) {
+  if (!Number.isFinite(euros) || euros < 0 || euros > 50) {
     return null
   }
   return Math.round(euros * 100)

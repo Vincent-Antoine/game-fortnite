@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { jsonError, withYou } from '@/lib/http'
-import { activatePower } from '@/lib/session-service'
+import { jsonError, requireSessionPlayer, withYou } from '@/lib/http'
+import { togglePower } from '@/lib/session-service'
 import type { PowerKind } from '@/lib/scoring'
 
 export async function POST(
@@ -9,15 +9,15 @@ export async function POST(
 ) {
   try {
     const { code, gameId } = await context.params
+    const playerId = await requireSessionPlayer(code)
     const body = (await request.json()) as {
-      playerId?: string
       kind?: PowerKind
       targetPlayerId?: string | null
     }
-    const dto = await activatePower({
+    const dto = await togglePower({
       code,
       gameId,
-      playerId: body.playerId ?? '',
+      playerId,
       kind: body.kind ?? 'double',
       targetPlayerId: body.targetPlayerId ?? null,
     })

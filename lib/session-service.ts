@@ -60,7 +60,7 @@ export async function createSession(input: {
   const avatar = sanitizeAvatar(input.avatar)
   const photoData = sanitizePhoto(input.photoData)
   const stakeCents = input.stakeCents ?? 25
-  if (!Number.isInteger(stakeCents) || stakeCents < 1 || stakeCents > 5000) {
+  if (!Number.isInteger(stakeCents) || stakeCents < 0 || stakeCents > 5000) {
     throw new ApiError(400, 'Mise invalide')
   }
 
@@ -413,6 +413,9 @@ export async function getSessionDto(
 
   const usedByPlayer = new Map<string, { double: boolean; shield: boolean; halve: boolean }>()
   for (const game of gameDtos) {
+    if (game.status === 'open') {
+      continue
+    }
     for (const power of game.powers) {
       const current = usedByPlayer.get(power.playerId) ?? { double: false, shield: false, halve: false }
       current[power.kind] = true
@@ -585,7 +588,7 @@ export async function setPlayerPhoto(input: {
   return getSessionDto(session.code, null)
 }
 
-export async function activatePower(input: {
+export async function togglePower(input: {
   code: string
   gameId: string
   playerId: string
@@ -607,8 +610,20 @@ export async function activatePower(input: {
   if (input.kind === 'halve' && !input.targetPlayerId) {
     throw new ApiError(400, 'Choisis une cible')
   }
-  const sessionGames = await db.select({ id: games.id }).from(games).where(eq(games.sessionId, session.id))
-  for (const row of sessionGames) {
+  const [you] = await db
+    .select()
+    .from(players)
+    .where(and(eq(players.id, input.playerId), eq(players.sessionId, session.id)))
+    .limit(1)
+  if (!you) {
+    throw new ApiError(403, 'Pas dans la session')
+  }
+
+  const otherGames = await db
+    .select({ id: games.id })
+    .from(games)
+    .where(and(eq(games.sessionId, session.id), eq(games.status, 'closed')))
+  for (const row of otherGames) {
     const used = await db
       .select()
       .from(gamePowers)
@@ -617,13 +632,34 @@ export async function activatePower(input: {
       throw new ApiError(409, 'Déjà utilisé dans cette session')
     }
   }
+
+  const current = await db
+    .select()
+    .from(gamePowers)
+    .where(and(eq(gamePowers.gameId, game.id), eq(gamePowers.playerId, input.playerId)))
+
+  const same = current.find((row) => {
+    if (row.kind !== input.kind) {
+      return false
+    }
+    if (input.kind === 'halve') {
+      return row.targetPlayerId === input.targetPlayerId
+    }
+    return true
+  })
+  if (current.length > 0) {
+    await db.delete(gamePowers).where(and(eq(gamePowers.gameId, game.id), eq(gamePowers.playerId, input.playerId)))
+  }
+  if (same) {
+    return getSessionDto(session.code, input.playerId)
+  }
   await db.insert(gamePowers).values({
     gameId: game.id,
     playerId: input.playerId,
     kind: input.kind,
     targetPlayerId: input.kind === 'halve' ? input.targetPlayerId : null,
   })
-  return getSessionDto(session.code, null)
+  return getSessionDto(session.code, input.playerId)
 }
 
 export async function lockGamePowers(code: string, gameId: string): Promise<SessionDTO> {

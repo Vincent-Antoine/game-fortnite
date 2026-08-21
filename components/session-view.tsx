@@ -6,7 +6,7 @@ import { PhotoPicker } from '@/components/photo-picker'
 import { allScoresConfirmed, SESSION_PING_PRESETS } from '@/lib/chat'
 import { formatCents } from '@/lib/money'
 import { isPlayerLive } from '@/lib/presence'
-import { modifiedPoints } from '@/lib/scoring'
+import { modifiedPoints, type PowerKind, type PowerUse } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
 
 type Props = { code: string }
@@ -294,7 +294,7 @@ export function SessionView({ code }: Props) {
               <li>Le dernier paie les points du premier. Les milieux ne paient rien.</li>
               <li>À 2, le perdant paie le gagnant.</li>
               <li>First kill départage. Sinon la dette se partage.</li>
-              <li>Pouvoirs 1 fois / session : x2, /2 un adversaire, bouclier.</li>
+              <li>Pouvoirs : 1 par game, chaque pouvoir 1 fois dans la soirée. Reclique pour annuler.</li>
             </ul>
             <button
               type="button"
@@ -388,42 +388,42 @@ export function SessionView({ code }: Props) {
           </div>
           {!openGame.powersLocked ? (
             <div className="rounded-3xl bg-panel p-4">
-              <p className="font-hud text-xs tracking-[0.2em] text-gold">POUVOIRS · 1 FOIS / SESSION</p>
-              <p className="mt-1 text-sm text-mute">x2 ton score · /2 un adversaire · bouclier (le 2e paie)</p>
-              {session.players.map((player) => (
-                <div key={player.id} className="mt-3 flex flex-wrap gap-2">
-                  <span className="w-full text-sm font-semibold">{player.name}</span>
-                  <button
-                    type="button"
-                    disabled={player.usedPowers.double}
-                    onClick={() => void run('power', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, { method: 'POST', body: JSON.stringify({ playerId: player.id, kind: 'double' }) }))}
-                    className="rounded-full bg-dusk px-3 py-1 text-xs disabled:opacity-30"
-                  >
-                    x2
-                  </button>
-                  <button
-                    type="button"
-                    disabled={player.usedPowers.shield}
-                    onClick={() => void run('power', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, { method: 'POST', body: JSON.stringify({ playerId: player.id, kind: 'shield' }) }))}
-                    className="rounded-full bg-dusk px-3 py-1 text-xs disabled:opacity-30"
-                  >
-                    Bouclier
-                  </button>
-                  {session.players
-                    .filter((target) => target.id !== player.id)
-                    .map((target) => (
-                      <button
-                        key={target.id}
-                        type="button"
-                        disabled={player.usedPowers.halve}
-                        onClick={() => void run('power', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, { method: 'POST', body: JSON.stringify({ playerId: player.id, kind: 'halve', targetPlayerId: target.id }) }))}
-                        className="rounded-full bg-dusk px-3 py-1 text-xs disabled:opacity-30"
-                      >
-                        /2 {target.name}
-                      </button>
-                    ))}
-                </div>
-              ))}
+              <p className="font-hud text-xs tracking-[0.2em] text-gold">POUVOIRS · 1 PAR GAME</p>
+              <p className="mt-1 text-sm text-mute">
+                Tu choisis le tien au début de chaque game. Déjà utilisé ce soir = plus dispo. Reclique pour
+                annuler.
+              </p>
+              {(() => {
+                const you = session.players.find((player) => player.id === session.youPlayerId)
+                if (!you) {
+                  return <p className="mt-3 text-sm text-mute">Rejoins la session pour choisir ton pouvoir.</p>
+                }
+                return (
+                  <PowerPicker
+                    you={you}
+                    others={session.players.filter((player) => player.id !== you.id)}
+                    selected={openGame.powers.find((power) => power.playerId === you.id) ?? null}
+                    disabled={pending !== ''}
+                    onPick={(kind, targetPlayerId) =>
+                      void run('power', () =>
+                        mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, {
+                          method: 'POST',
+                          body: JSON.stringify({ kind, targetPlayerId }),
+                        }),
+                      )
+                    }
+                  />
+                )
+              })()}
+              {openGame.powers.filter((power) => power.playerId !== session.youPlayerId).length > 0 ? (
+                <p className="mt-3 text-sm text-mute">
+                  Les autres :{' '}
+                  {openGame.powers
+                    .filter((power) => power.playerId !== session.youPlayerId)
+                    .map((power) => `${names.get(power.playerId)?.name} ${powerLabel(power.kind, names.get(power.targetPlayerId ?? '')?.name)}`)
+                    .join(' · ')}
+                </p>
+              ) : null}
               <button
                 type="button"
                 className="mt-4 w-full rounded-full bg-gold py-3 font-semibold text-dusk"
@@ -804,6 +804,76 @@ function liveBoard(session: SessionDTO) {
       }
     })
     .sort((a, b) => b.gamePoints - a.gamePoints || b.nightPoints - a.nightPoints)
+}
+
+function powerLabel(kind: string, targetName?: string) {
+  if (kind === 'double') {
+    return 'x2'
+  }
+  if (kind === 'shield') {
+    return 'bouclier'
+  }
+  if (kind === 'halve') {
+    return targetName ? `/2 ${targetName}` : '/2'
+  }
+  return kind
+}
+
+function PowerPicker({
+  you,
+  others,
+  selected,
+  disabled,
+  onPick,
+}: {
+  you: PlayerRef
+  others: PlayerRef[]
+  selected: PowerUse | null
+  disabled: boolean
+  onPick: (kind: PowerKind, targetPlayerId?: string | null) => void
+}) {
+  function chip(active: boolean, used: boolean) {
+    if (used) {
+      return 'rounded-full bg-dusk px-3 py-1 text-xs opacity-30'
+    }
+    if (active) {
+      return 'rounded-full bg-gold px-3 py-1 text-xs font-semibold text-dusk'
+    }
+    return 'rounded-full bg-dusk px-3 py-1 text-xs'
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <span className="w-full text-sm font-semibold">Ton pouvoir</span>
+      <button
+        type="button"
+        disabled={disabled || you.usedPowers.double}
+        onClick={() => onPick('double')}
+        className={chip(selected?.kind === 'double', you.usedPowers.double)}
+      >
+        x2
+      </button>
+      <button
+        type="button"
+        disabled={disabled || you.usedPowers.shield}
+        onClick={() => onPick('shield')}
+        className={chip(selected?.kind === 'shield', you.usedPowers.shield)}
+      >
+        Bouclier
+      </button>
+      {others.map((target) => (
+        <button
+          key={target.id}
+          type="button"
+          disabled={disabled || you.usedPowers.halve}
+          onClick={() => onPick('halve', target.id)}
+          className={chip(selected?.kind === 'halve' && selected.targetPlayerId === target.id, you.usedPowers.halve)}
+        >
+          /2 {target.name}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function Scoreboard({
