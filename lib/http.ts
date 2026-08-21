@@ -1,8 +1,9 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { getAuthUser } from '@/lib/auth'
 import { normalizeCode } from '@/lib/code'
 import { ApiError } from '@/lib/errors'
-import { identifyPlayer } from '@/lib/session-service'
+import { identifyPlayer, identifyPlayerByUser } from '@/lib/session-service'
 import type { SessionDTO } from '@/lib/types'
 
 export function jsonError(error: unknown) {
@@ -41,7 +42,27 @@ export async function setAuthCookie(code: string, playerId: string, token: strin
 }
 
 export async function withYou(code: string, dto: SessionDTO): Promise<SessionDTO> {
-  const auth = await readAuthCookie(code)
-  const youPlayerId = await identifyPlayer(code, auth.playerId, auth.token)
+  const youPlayerId = await resolveYouPlayerId(code)
   return { ...dto, youPlayerId }
+}
+
+export async function requireSessionPlayer(code: string): Promise<string> {
+  const youPlayerId = await resolveYouPlayerId(code)
+  if (!youPlayerId) {
+    throw new ApiError(401, 'Rejoins la session d’abord')
+  }
+  return youPlayerId
+}
+
+async function resolveYouPlayerId(code: string): Promise<string | null> {
+  const auth = await readAuthCookie(code)
+  const byCookie = await identifyPlayer(code, auth.playerId, auth.token)
+  if (byCookie) {
+    return byCookie
+  }
+  const user = await getAuthUser()
+  if (!user) {
+    return null
+  }
+  return identifyPlayerByUser(code, user.id)
 }

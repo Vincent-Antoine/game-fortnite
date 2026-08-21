@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, count } from 'drizzle-orm'
 import { ApiError } from '@/lib/errors'
 import { getAuthUser, hashToken, newToken, setUserCookie } from '@/lib/auth'
 import { normalizeCode, randomCode } from '@/lib/code'
@@ -15,9 +15,11 @@ import {
   transfers,
   userSessions,
   users,
+  directMessages,
 } from '@/lib/db/schema'
+import { sanitizeMessage } from '@/lib/chat'
 import { emptyCareer, personalRecords, sortCareers, withMoneyLabels, type Career, type GameRecord } from '@/lib/career'
-import { sendPushToUser } from '@/lib/push'
+import { notifyUser } from '@/lib/notify'
 import { seasonWindow, type SeasonRange } from '@/lib/season'
 import { hashPassword, verifyPassword } from '@/lib/password'
 
@@ -96,20 +98,6 @@ async function createLogin(userId: string) {
 
 function publicUser(user: { id: string; email: string; name: string; friendCode: string }) {
   return { id: user.id, email: user.email, name: user.name, friendCode: user.friendCode }
-}
-
-async function notifyUser(
-  userId: string,
-  note: { type: string; title: string; href: string; body: string },
-) {
-  const db = getDb()
-  await db.insert(notifications).values({
-    userId,
-    type: note.type,
-    title: note.title,
-    href: note.href,
-  })
-  await sendPushToUser(userId, { title: note.title, body: note.body, href: note.href })
 }
 
 export async function requireUser() {
@@ -193,6 +181,12 @@ export async function listFriends() {
   const rows = await db.select().from(friendships).where(
     or(eq(friendships.requesterId, me.id), eq(friendships.addresseeId, me.id)),
   )
+  const unreadRows = await db
+    .select({ fromUserId: directMessages.fromUserId, n: count() })
+    .from(directMessages)
+    .where(and(eq(directMessages.toUserId, me.id), eq(directMessages.read, false)))
+    .groupBy(directMessages.fromUserId)
+  const unread = new Map(unreadRows.map((row) => [row.fromUserId, Number(row.n)]))
   const result = []
   for (const row of rows) {
     const otherId = row.requesterId === me.id ? row.addresseeId : row.requesterId
@@ -204,10 +198,103 @@ export async function listFriends() {
       friendshipId: row.id,
       status: row.status,
       incoming: row.addresseeId === me.id && row.status === 'pending',
+      unreadCount: unread.get(other.id) ?? 0,
       user: { id: other.id, name: other.name, friendCode: other.friendCode },
     })
   }
   return { me, friends: result }
+}
+
+async function requireAcceptedFriend(friendCode: string) {
+  const me = await requireUser()
+  const db = getDb()
+  const code = normalizeCode(friendCode)
+  const [other] = await db.select().from(users).where(eq(users.friendCode, code)).limit(1)
+  if (!other || other.id === me.id) {
+    throw new ApiError(404, 'Ami introuvable')
+  }
+  const pair = await db
+    .select()
+    .from(friendships)
+    .where(
+      or(
+        and(eq(friendships.requesterId, me.id), eq(friendships.addresseeId, other.id)),
+        and(eq(friendships.requesterId, other.id), eq(friendships.addresseeId, me.id)),
+      ),
+    )
+  if (!pair.some((row) => row.status === 'accepted')) {
+    throw new ApiError(403, 'Pas dans tes amis')
+  }
+  return { me, other }
+}
+
+export async function listDirectMessages(friendCode: string) {
+  const { me, other } = await requireAcceptedFriend(friendCode)
+  const db = getDb()
+  const rows = await db
+    .select()
+    .from(directMessages)
+    .where(
+      or(
+        and(eq(directMessages.fromUserId, me.id), eq(directMessages.toUserId, other.id)),
+        and(eq(directMessages.fromUserId, other.id), eq(directMessages.toUserId, me.id)),
+      ),
+    )
+    .orderBy(desc(directMessages.createdAt))
+    .limit(100)
+  await db
+    .update(directMessages)
+    .set({ read: true })
+    .where(
+      and(
+        eq(directMessages.fromUserId, other.id),
+        eq(directMessages.toUserId, me.id),
+        eq(directMessages.read, false),
+      ),
+    )
+  return {
+    friend: { id: other.id, name: other.name, friendCode: other.friendCode },
+    messages: rows
+      .slice()
+      .reverse()
+      .map((row) => ({
+        id: row.id,
+        fromMe: row.fromUserId === me.id,
+        body: row.body,
+        createdAt: row.createdAt.toISOString(),
+      })),
+  }
+}
+
+export async function sendDirectMessage(friendCode: string, body: string) {
+  const { me, other } = await requireAcceptedFriend(friendCode)
+  const text = sanitizeMessage(body, 500)
+  const db = getDb()
+  const [row] = await db
+    .insert(directMessages)
+    .values({ fromUserId: me.id, toUserId: other.id, body: text })
+    .returning()
+  await db
+    .delete(notifications)
+    .where(
+      and(
+        eq(notifications.userId, other.id),
+        eq(notifications.type, 'message'),
+        eq(notifications.href, `/amis/${me.friendCode}`),
+      ),
+    )
+  await notifyUser(other.id, {
+    type: 'message',
+    title: `${me.name} : ${text.slice(0, 80)}`,
+    href: `/amis/${me.friendCode}`,
+    body: text,
+  })
+  return {
+    id: row.id,
+    fromMe: true,
+    body: row.body,
+    createdAt: row.createdAt.toISOString(),
+  }
 }
 
 export async function inviteFriend(code: string, friendUserId: string) {

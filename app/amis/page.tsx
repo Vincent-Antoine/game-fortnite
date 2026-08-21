@@ -7,6 +7,7 @@ type FriendRow = {
   friendshipId: string
   status: string
   incoming: boolean
+  unreadCount?: number
   user: { id: string; name: string; friendCode: string }
 }
 
@@ -66,16 +67,20 @@ export default function AmisPage() {
         {friends.map((row) => (
           <li key={row.friendshipId}>
             {row.status === 'accepted' ? (
-              <Link
-                href={`/profil/${row.user.friendCode}`}
-                className="flex items-center justify-between rounded-2xl bg-panel px-4 py-3"
-              >
-                <div>
+              <div className="flex items-center gap-3 rounded-2xl bg-panel px-4 py-3">
+                <Link href={`/profil/${row.user.friendCode}`} className="min-w-0 flex-1">
                   <p className="font-semibold">{row.user.name}</p>
                   <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
-                </div>
-                <span className="text-sm text-mute">Ami</span>
-              </Link>
+                </Link>
+                <Link href={`/amis/${row.user.friendCode}`} className="relative shrink-0 text-sm text-horizon">
+                  Message
+                  {(row.unreadCount ?? 0) > 0 ? (
+                    <span className="absolute -right-2 -top-2 grid min-h-5 min-w-5 place-items-center rounded-full bg-horizon px-1 font-hud text-[10px] text-dusk">
+                      {(row.unreadCount ?? 0) > 9 ? '9+' : row.unreadCount}
+                    </span>
+                  ) : null}
+                </Link>
+              </div>
             ) : (
               <div className="flex items-center justify-between rounded-2xl bg-panel px-4 py-3">
                 <div>

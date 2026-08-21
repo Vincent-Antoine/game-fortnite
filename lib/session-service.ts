@@ -1,11 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import { colorForIndex } from '@/lib/colors'
 import { sanitizeAvatar } from '@/lib/avatars'
+import { allScoresConfirmed, pingTooSoon, resolveSessionPing } from '@/lib/chat'
 import { normalizeCode, randomCode } from '@/lib/code'
 import { getDb } from '@/lib/db'
-import { gamePowers, games, players, scores, sessions, transfers } from '@/lib/db/schema'
+import { gamePowers, games, players, scores, sessionPings, sessions, transfers } from '@/lib/db/schema'
 import { ApiError } from '@/lib/errors'
+import { notifyUser } from '@/lib/notify'
 import { settleGame, simplifyDebts, netBalances, type PowerKind, type PowerUse, type Transfer } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
 
@@ -283,6 +285,14 @@ export async function updateOpenGame(input: {
     if (!rosterIds.has(row.playerId)) {
       throw new ApiError(400, 'Joueur inconnu')
     }
+    const [current] = await db
+      .select()
+      .from(scores)
+      .where(and(eq(scores.gameId, game.id), eq(scores.playerId, row.playerId)))
+      .limit(1)
+    if (current?.confirmedAt) {
+      throw new ApiError(409, 'Score déjà confirmé')
+    }
     await db
       .update(scores)
       .set({ kills: clampStat(row.kills), revives: clampStat(row.revives) })
@@ -301,6 +311,10 @@ export async function closeGame(code: string, gameId: string): Promise<SessionDT
   }
 
   const rows = await db.select().from(scores).where(eq(scores.gameId, game.id))
+  const roster = await db.select({ id: players.id }).from(players).where(eq(players.sessionId, session.id))
+  if (rows.length < roster.length || !allScoresConfirmed(rows)) {
+    throw new ApiError(409, 'Tout le monde n’a pas confirmé')
+  }
   const powerRows = await db.select().from(gamePowers).where(eq(gamePowers.gameId, game.id))
   const settled = settleGame({
     scores: rows.map((row) => ({
@@ -399,6 +413,7 @@ export async function getSessionDto(
         playerId: row.playerId,
         kills: row.kills,
         revives: row.revives,
+        confirmedAt: row.confirmedAt ? row.confirmedAt.toISOString() : null,
       })),
       powers: mappedPowers,
       transfers: mappedTransfers,
@@ -413,6 +428,13 @@ export async function getSessionDto(
       usedByPlayer.set(power.playerId, current)
     }
   }
+
+  const pingRows = await db
+    .select()
+    .from(sessionPings)
+    .where(eq(sessionPings.sessionId, session.id))
+    .orderBy(desc(sessionPings.createdAt))
+    .limit(20)
 
   return {
     code: session.code,
@@ -431,6 +453,15 @@ export async function getSessionDto(
     })),
     games: gameDtos,
     ticket: simplifyDebts(netBalances(closedTransfers)),
+    pings: pingRows
+      .slice()
+      .reverse()
+      .map((row) => ({
+        id: row.id,
+        fromPlayerId: row.fromPlayerId,
+        body: row.body,
+        createdAt: row.createdAt.toISOString(),
+      })),
   }
 }
 
@@ -525,6 +556,14 @@ export async function nudgeScore(input: {
   if (game.status !== 'open') {
     throw new ApiError(409, 'Game déjà clôturée')
   }
+  const [current] = await db
+    .select()
+    .from(scores)
+    .where(and(eq(scores.gameId, game.id), eq(scores.playerId, input.playerId)))
+    .limit(1)
+  if (current?.confirmedAt) {
+    throw new ApiError(409, 'Score déjà confirmé')
+  }
   const killsDelta = Number(input.killsDelta ?? 0)
   const revivesDelta = Number(input.revivesDelta ?? 0)
   if (!Number.isInteger(killsDelta) || !Number.isInteger(revivesDelta)) {
@@ -617,4 +656,83 @@ export async function touchPresence(code: string, playerId?: string, token?: str
   const db = getDb()
   await db.update(players).set({ lastSeenAt: new Date() }).where(eq(players.id, you))
   return getSessionDto(code, you)
+}
+
+export async function confirmOwnScore(code: string, gameId: string, playerId: string): Promise<SessionDTO> {
+  const db = getDb()
+  const session = await requireOpenSession(code)
+  const game = await requireGame(session.id, gameId)
+  if (game.status !== 'open') {
+    throw new ApiError(409, 'Game déjà clôturée')
+  }
+  const [row] = await db
+    .select()
+    .from(scores)
+    .where(and(eq(scores.gameId, game.id), eq(scores.playerId, playerId)))
+    .limit(1)
+  if (!row) {
+    throw new ApiError(404, 'Score introuvable')
+  }
+  if (row.confirmedAt) {
+    throw new ApiError(409, 'Score déjà confirmé')
+  }
+  await db.update(scores).set({ confirmedAt: new Date() }).where(eq(scores.id, row.id))
+  const roster = await db.select().from(players).where(eq(players.sessionId, session.id))
+  const you = roster.find((player) => player.id === playerId)
+  const host = roster.find((player) => player.isHost)
+  const remaining = await db.select().from(scores).where(eq(scores.gameId, game.id))
+  if (host?.userId && host.id !== playerId && you) {
+    await notifyUser(host.userId, {
+      type: 'confirm',
+      title: `${you.name} a confirmé`,
+      href: `/session/${session.code}`,
+      body: allScoresConfirmed(remaining) ? 'Tout le monde a validé. Tu peux clôturer.' : 'Il reste des scores à valider.',
+    })
+  }
+  return getSessionDto(session.code, playerId)
+}
+
+export async function sendSessionPing(
+  code: string,
+  playerId: string,
+  input: { preset?: string; body?: string },
+): Promise<SessionDTO> {
+  const db = getDb()
+  const session = await requireOpenSession(code)
+  const roster = await db.select().from(players).where(eq(players.sessionId, session.id))
+  if (!roster.some((player) => player.id === playerId)) {
+    throw new ApiError(403, 'Pas dans la session')
+  }
+  const [last] = await db
+    .select()
+    .from(sessionPings)
+    .where(and(eq(sessionPings.sessionId, session.id), eq(sessionPings.fromPlayerId, playerId)))
+    .orderBy(desc(sessionPings.createdAt))
+    .limit(1)
+  if (pingTooSoon(last?.createdAt ?? null)) {
+    throw new ApiError(429, 'Attends 10 secondes')
+  }
+  const body = resolveSessionPing(input)
+  await db.insert(sessionPings).values({
+    sessionId: session.id,
+    fromPlayerId: playerId,
+    body,
+  })
+  const you = roster.find((player) => player.id === playerId)
+  const seen = new Set<string>()
+  await Promise.all(
+    roster.map(async (player) => {
+      if (!player.userId || player.id === playerId || seen.has(player.userId)) {
+        return
+      }
+      seen.add(player.userId)
+      await notifyUser(player.userId, {
+        type: 'ping',
+        title: `${you?.name ?? 'Un pote'} · ${session.code}`,
+        href: `/session/${session.code}`,
+        body,
+      })
+    }),
+  )
+  return getSessionDto(session.code, playerId)
 }

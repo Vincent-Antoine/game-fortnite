@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AvatarPicker, PlayerAvatar } from '@/components/avatar'
 import { PhotoPicker } from '@/components/photo-picker'
+import { allScoresConfirmed, SESSION_PING_PRESETS } from '@/lib/chat'
 import { formatCents } from '@/lib/money'
 import { isPlayerLive } from '@/lib/presence'
 import { modifiedPoints } from '@/lib/scoring'
@@ -204,6 +205,10 @@ export function SessionView({ code }: Props) {
       playerId,
       kills: 0,
       revives: 0,
+      confirmedAt: null,
+    }
+    if (current.confirmedAt) {
+      return
     }
     const nextScore = { ...current, [field]: value }
     const scores = openGame.scores.map((row) => (row.playerId === playerId ? nextScore : row))
@@ -433,9 +438,12 @@ export function SessionView({ code }: Props) {
               playerId: player.id,
               kills: 0,
               revives: 0,
+              confirmedAt: null,
             }
             const points = score.kills + score.revives
             const isFirst = openGame.firstKillPlayerId === player.id
+            const mine = session.youPlayerId === player.id
+            const confirmed = Boolean(score.confirmedAt)
             return (
               <article
                 key={player.id}
@@ -449,7 +457,7 @@ export function SessionView({ code }: Props) {
                       <div>
                         <p className="text-lg font-semibold">
                           {player.name}
-                          {session.youPlayerId === player.id ? ' · toi' : ''}
+                          {mine ? ' · toi' : ''}
                         </p>
                         <p className="font-hud text-xs tracking-widest text-mute">{points} PTS</p>
                       </div>
@@ -461,6 +469,7 @@ export function SessionView({ code }: Props) {
                       label="Kills"
                       value={score.kills}
                       accent="kill"
+                      disabled={confirmed}
                       onFocus={() => editingPlayers.current.add(player.id)}
                       onBlur={() => editingPlayers.current.delete(player.id)}
                       onCommit={(raw) => commitScore(player.id, 'kills', raw)}
@@ -469,6 +478,7 @@ export function SessionView({ code }: Props) {
                       label="Réas"
                       value={score.revives}
                       accent="rez"
+                      disabled={confirmed}
                       onFocus={() => editingPlayers.current.add(player.id)}
                       onBlur={() => editingPlayers.current.delete(player.id)}
                       onCommit={(raw) => commitScore(player.id, 'revives', raw)}
@@ -481,16 +491,41 @@ export function SessionView({ code }: Props) {
                   >
                     {isFirst ? 'FIRST KILL' : 'MARQUER FIRST KILL'}
                   </button>
+                  {mine && !confirmed ? (
+                    <button
+                      type="button"
+                      disabled={pending !== ''}
+                      onClick={() =>
+                        void run('confirm', () =>
+                          mutate(`/api/sessions/${code}/games/${openGame.id}/confirm`, { method: 'POST' }),
+                        )
+                      }
+                      className="mt-3 w-full rounded-full bg-rez py-3 font-semibold text-dusk disabled:opacity-50"
+                    >
+                      {pending === 'confirm' ? '…' : 'Confirmer mes scores'}
+                    </button>
+                  ) : (
+                    <p className={`mt-3 text-center font-hud text-xs tracking-[0.2em] ${confirmed ? 'text-rez' : 'text-mute'}`}>
+                      {confirmed ? 'CONFIRMÉ' : 'EN ATTENTE'}
+                    </p>
+                  )}
                 </div>
               </article>
             )
           })}
           <button
-            disabled={pending !== '' || session.status !== 'open'}
+            disabled={pending !== '' || session.status !== 'open' || !allScoresConfirmed(openGame.scores)}
             onClick={() => void run('close-game', () => mutate(`/api/sessions/${code}/games/${openGame.id}/close`, { method: 'POST' }))}
             className="rounded-full bg-horizon py-4 text-lg font-semibold text-dusk disabled:opacity-50"
           >
-            {pending === 'close-game' ? 'Calcul…' : 'Clôturer la game'}
+            {pending === 'close-game'
+              ? 'Calcul…'
+              : !allScoresConfirmed(openGame.scores)
+                ? `Encore ${session.players
+                    .filter((player) => !openGame.scores.find((row) => row.playerId === player.id)?.confirmedAt)
+                    .map((player) => player.name)
+                    .join(', ')}`
+                : 'Clôturer la game'}
           </button>
         </section>
       ) : session.status === 'open' ? (
@@ -501,6 +536,23 @@ export function SessionView({ code }: Props) {
         >
           {pending === 'new-game' ? '…' : session.players.length < 2 ? 'Ajoute un 2e joueur' : 'Ouvrir une game'}
         </button>
+      ) : null}
+
+      {session.youPlayerId && session.status === 'open' ? (
+        <PingBar
+          pings={session.pings ?? []}
+          names={names}
+          disabled={pending !== ''}
+          sending={pending === 'ping'}
+          onSend={(payload) =>
+            void run('ping', () =>
+              mutate(`/api/sessions/${code}/pings`, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+              }),
+            )
+          }
+        />
       ) : null}
 
       <div id="historique" className="flex scroll-mt-4 flex-col gap-4">
@@ -745,6 +797,7 @@ function ScoreField({
   label,
   value,
   accent,
+  disabled,
   onFocus,
   onBlur,
   onCommit,
@@ -752,6 +805,7 @@ function ScoreField({
   label: string
   value: number
   accent: 'kill' | 'rez'
+  disabled?: boolean
   onFocus: () => void
   onBlur: () => void
   onCommit: (raw: string) => void
@@ -765,23 +819,33 @@ function ScoreField({
   }, [value, focused])
   const color = accent === 'kill' ? 'text-kill' : 'text-rez'
   return (
-    <label className="rounded-2xl bg-dusk px-3 py-3">
+    <label className={`rounded-2xl bg-dusk px-3 py-3 ${disabled ? 'opacity-50' : ''}`}>
       <p className={`font-hud text-[10px] tracking-[0.2em] ${color}`}>{label.toUpperCase()}</p>
       <input
         inputMode="numeric"
         pattern="[0-9]*"
+        readOnly={disabled}
         value={focused ? text : String(value)}
         onFocus={() => {
+          if (disabled) {
+            return
+          }
           setFocused(true)
           setText(String(value))
           onFocus()
         }}
         onBlur={() => {
+          if (disabled) {
+            return
+          }
           setFocused(false)
           onCommit(text)
           onBlur()
         }}
         onChange={(event) => {
+          if (disabled) {
+            return
+          }
           const next = event.target.value.replace(/\D/g, '').slice(0, 2)
           setText(next)
           onCommit(next === '' ? '0' : next)
@@ -789,6 +853,78 @@ function ScoreField({
         className="mt-1 w-full bg-transparent text-center font-display text-3xl outline-none"
       />
     </label>
+  )
+}
+
+function PingBar({
+  pings,
+  names,
+  disabled,
+  sending,
+  onSend,
+}: {
+  pings: SessionDTO['pings']
+  names: Map<string, PlayerRef>
+  disabled: boolean
+  sending: boolean
+  onSend: (payload: { preset?: string; body?: string }) => void
+}) {
+  const [draft, setDraft] = useState('')
+  return (
+    <section className="rounded-3xl bg-panel p-4">
+      <p className="font-hud text-xs tracking-[0.2em] text-gold">PING SQUAD</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {(Object.keys(SESSION_PING_PRESETS) as Array<keyof typeof SESSION_PING_PRESETS>).map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            disabled={disabled}
+            onClick={() => onSend({ preset })}
+            className="rounded-full bg-dusk px-3 py-2 text-sm disabled:opacity-50"
+          >
+            {SESSION_PING_PRESETS[preset]}
+          </button>
+        ))}
+      </div>
+      <form
+        className="mt-3 flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          const body = draft.trim()
+          if (!body) {
+            return
+          }
+          onSend({ body })
+          setDraft('')
+        }}
+      >
+        <input
+          value={draft}
+          maxLength={120}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Message court"
+          className="flex-1 rounded-full bg-dusk px-4 py-2 text-sm"
+        />
+        <button
+          disabled={disabled || !draft.trim()}
+          className="rounded-full bg-horizon px-4 text-sm font-semibold text-dusk disabled:opacity-50"
+        >
+          {sending ? '…' : 'Ping'}
+        </button>
+      </form>
+      {pings.length === 0 ? (
+        <p className="mt-3 text-sm text-mute">Aucun ping pour l’instant.</p>
+      ) : (
+        <ul className="mt-3 flex flex-col gap-1">
+          {pings.map((row) => (
+            <li key={row.id} className="text-sm">
+              <span className="text-mute">{names.get(row.fromPlayerId)?.name ?? 'Pote'} · </span>
+              {row.body}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 

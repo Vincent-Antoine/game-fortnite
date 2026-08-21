@@ -148,6 +148,7 @@ export const scores = pgTable(
       .references(() => players.id, { onDelete: 'cascade' }),
     kills: integer('kills').notNull().default(0),
     revives: integer('revives').notNull().default(0),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
   },
   (table) => [uniqueIndex('scores_game_player').on(table.gameId, table.playerId)],
 )
@@ -164,4 +165,29 @@ export const transfers = pgTable('transfers', {
     .notNull()
     .references(() => players.id),
   amountCents: integer('amount_cents').notNull(),
+})
+
+export const directMessages = pgTable('direct_messages', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  fromUserId: uuid('from_user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  toUserId: uuid('to_user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  body: text('body').notNull(),
+  read: boolean('read').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const sessionPings = pgTable('session_pings', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  sessionId: uuid('session_id')
+    .notNull()
+    .references(() => sessions.id, { onDelete: 'cascade' }),
+  fromPlayerId: uuid('from_player_id')
+    .notNull()
+    .references(() => players.id, { onDelete: 'cascade' }),
+  body: text('body').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 })

@@ -21,9 +21,10 @@ export type SessionDTO = {
     status: 'open' | 'closed'
     powersLocked: boolean
     firstKillPlayerId: string | null
-    scores: { playerId: string; kills: number; revives: number }[]
+    scores: { playerId: string; kills: number; revives: number; confirmedAt: string | null }[]
     powers: PowerUse[]
     transfers: Transfer[]
   }[]
   ticket: Transfer[]
+  pings: { id: string; fromPlayerId: string; body: string; createdAt: string }[]
 }

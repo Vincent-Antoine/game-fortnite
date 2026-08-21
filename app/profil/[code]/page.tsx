@@ -64,6 +64,14 @@ export default function FriendProfilPage() {
       <p className="font-hud tracking-[0.25em] text-gold">ID {profile.user.friendCode}</p>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
       <CareerGrid stats={profile} />
+      {profile.friendshipId ? (
+        <Link
+          href={`/amis/${profile.user.friendCode}`}
+          className="rounded-full bg-horizon py-3 text-center font-semibold text-dusk"
+        >
+          Message
+        </Link>
+      ) : null}
       <Link href="/classement" className="text-sm text-horizon underline">
         Voir le classement
       </Link>
