@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { netBalances, settleGame, simplifyDebts } from './scoring'
+import { netBalances, sessionPoints, settleGame, simplifyDebts } from './scoring'
 
 const brandon = 'brandon'
 const dany = 'dany'
@@ -192,6 +192,29 @@ describe('pouvoirs', () => {
     expect(result).toEqual([
       { fromPlayerId: dany, toPlayerId: brandon, amountCents: 125 },
     ])
+  })
+})
+
+describe('sessionPoints', () => {
+  it('applique x2 et /2 au cumul de soirée, pas seulement à la game en cours', () => {
+    const totals = sessionPoints([
+      {
+        scores: [
+          { playerId: brandon, kills: 2, revives: 0 },
+          { playerId: vincent, kills: 1, revives: 0 },
+        ],
+        powers: [{ playerId: brandon, kind: 'double', targetPlayerId: null }],
+      },
+      {
+        scores: [
+          { playerId: brandon, kills: 1, revives: 0 },
+          { playerId: vincent, kills: 3, revives: 0 },
+        ],
+        powers: [{ playerId: vincent, kind: 'halve', targetPlayerId: brandon }],
+      },
+    ])
+    expect(totals.get(brandon)).toBe(4)
+    expect(totals.get(vincent)).toBe(4)
   })
 })
 

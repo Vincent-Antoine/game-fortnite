@@ -6,7 +6,7 @@ import { PhotoPicker } from '@/components/photo-picker'
 import { allScoresConfirmed, SESSION_PING_PRESETS } from '@/lib/chat'
 import { formatCents } from '@/lib/money'
 import { isPlayerLive } from '@/lib/presence'
-import { modifiedPoints, type PowerKind, type PowerUse } from '@/lib/scoring'
+import { modifiedPoints, sessionPoints, type PowerKind, type PowerUse } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
 
 type Props = { code: string }
@@ -786,14 +786,12 @@ function liveBoard(session: SessionDTO) {
   const pointsMap = openGame
     ? modifiedPoints(openGame.scores, openGame.powers)
     : new Map<string, number>()
+  const nightMap = sessionPoints(session.games)
   return session.players
     .map((player) => {
       const gameScore = openGame?.scores.find((row) => row.playerId === player.id)
       const gamePoints = pointsMap.get(player.id) ?? (gameScore ? gameScore.kills + gameScore.revives : 0)
-      const nightPoints = session.games.reduce((sum, game) => {
-        const row = game.scores.find((score) => score.playerId === player.id)
-        return sum + (row ? row.kills + row.revives : 0)
-      }, 0)
+      const nightPoints = nightMap.get(player.id) ?? 0
       return {
         player,
         gameKills: gameScore?.kills ?? 0,

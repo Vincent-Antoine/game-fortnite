@@ -45,6 +45,19 @@ export function modifiedPoints(scores: PlayerScore[], powers: PowerUse[] = []): 
   return points
 }
 
+export function sessionPoints(
+  games: { scores: PlayerScore[]; powers?: PowerUse[] }[],
+): Map<string, number> {
+  const totals = new Map<string, number>()
+  for (const game of games) {
+    const points = modifiedPoints(game.scores, game.powers ?? [])
+    for (const [playerId, value] of points) {
+      totals.set(playerId, (totals.get(playerId) ?? 0) + value)
+    }
+  }
+  return totals
+}
+
 function rankKeyOf(row: RankedPlayer): string {
   return `${row.points}:${row.hasFirstKill ? '1' : '0'}`
 }
