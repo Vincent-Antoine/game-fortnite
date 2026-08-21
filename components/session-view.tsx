@@ -507,6 +507,19 @@ export function SessionView({ code }: Props) {
                     >
                       {pending === 'confirm' ? '…' : 'Confirmer mes scores'}
                     </button>
+                  ) : mine && confirmed ? (
+                    <button
+                      type="button"
+                      disabled={pending !== ''}
+                      onClick={() =>
+                        void run('unconfirm', () =>
+                          mutate(`/api/sessions/${code}/games/${openGame.id}/confirm`, { method: 'DELETE' }),
+                        )
+                      }
+                      className="mt-3 w-full text-sm text-mute underline disabled:opacity-50"
+                    >
+                      {pending === 'unconfirm' ? '…' : 'Modifier mes scores'}
+                    </button>
                   ) : (
                     <p className={`mt-3 text-center font-hud text-xs tracking-[0.2em] ${confirmed ? 'text-rez' : 'text-mute'}`}>
                       {confirmed ? 'CONFIRMÉ' : 'EN ATTENTE'}

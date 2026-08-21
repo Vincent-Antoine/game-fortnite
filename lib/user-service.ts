@@ -32,6 +32,14 @@ function sanitizeUserName(name: string): string {
   return cleaned
 }
 
+function previewMessage(body: string): string {
+  const cleaned = body.replace(/\s+/g, ' ').trim()
+  if (cleaned.length <= 42) {
+    return cleaned
+  }
+  return `${cleaned.slice(0, 41)}…`
+}
+
 function sanitizeEmail(email: string): string {
   const cleaned = email.trim().toLowerCase()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) {
@@ -223,6 +231,8 @@ export async function listFriends() {
       status: row.status,
       incoming: row.addresseeId === me.id && row.status === 'pending',
       unreadCount: unread.get(other.id) ?? 0,
+      lastMessage: null as { body: string; fromMe: boolean } | null,
+      liveSession: null as { code: string; lastSeenAt: string | null } | null,
       user: {
         id: other.id,
         name: other.name,
@@ -231,6 +241,54 @@ export async function listFriends() {
         lastSeenAt: other.lastSeenAt ? other.lastSeenAt.toISOString() : null,
       },
     })
+  }
+  const acceptedIds = result.filter((row) => row.status === 'accepted').map((row) => row.user.id)
+  if (acceptedIds.length > 0) {
+    const recent = await db
+      .select()
+      .from(directMessages)
+      .where(
+        or(
+          and(eq(directMessages.fromUserId, me.id), inArray(directMessages.toUserId, acceptedIds)),
+          and(eq(directMessages.toUserId, me.id), inArray(directMessages.fromUserId, acceptedIds)),
+        ),
+      )
+      .orderBy(desc(directMessages.createdAt))
+      .limit(200)
+    const lastByUser = new Map<string, { body: string; fromMe: boolean }>()
+    for (const message of recent) {
+      const otherId = message.fromUserId === me.id ? message.toUserId : message.fromUserId
+      if (!lastByUser.has(otherId)) {
+        lastByUser.set(otherId, {
+          body: previewMessage(message.body),
+          fromMe: message.fromUserId === me.id,
+        })
+      }
+    }
+    const openRows = await db
+      .select({
+        userId: players.userId,
+        code: sessions.code,
+        lastSeenAt: players.lastSeenAt,
+      })
+      .from(players)
+      .innerJoin(sessions, eq(players.sessionId, sessions.id))
+      .where(and(eq(sessions.status, 'open'), inArray(players.userId, acceptedIds)))
+    const sessionByUser = new Map<string, { code: string; lastSeenAt: string | null }>()
+    for (const row of openRows) {
+      if (!row.userId) {
+        continue
+      }
+      const stamp = row.lastSeenAt ? row.lastSeenAt.toISOString() : null
+      const current = sessionByUser.get(row.userId)
+      if (!current || (stamp && (!current.lastSeenAt || stamp > current.lastSeenAt))) {
+        sessionByUser.set(row.userId, { code: row.code, lastSeenAt: stamp })
+      }
+    }
+    for (const row of result) {
+      row.lastMessage = lastByUser.get(row.user.id) ?? null
+      row.liveSession = sessionByUser.get(row.user.id) ?? null
+    }
   }
   return { me, friends: result }
 }
@@ -408,6 +466,14 @@ export async function setAccountPhoto(photoData: string | null) {
   const db = getDb()
   await db.update(users).set({ photoData: cleaned }).where(eq(users.id, me.id))
   return { photoData: cleaned }
+}
+
+export async function setAccountName(name: string) {
+  const me = await requireUser()
+  const cleaned = sanitizeUserName(name)
+  const db = getDb()
+  await db.update(users).set({ name: cleaned }).where(eq(users.id, me.id))
+  return { name: cleaned }
 }
 
 export async function getPlayerProfile(friendCode: string) {

@@ -30,6 +30,8 @@ export default function ProfilPage() {
   const [error, setError] = useState('')
   const [pendingCode, setPendingCode] = useState('')
   const [photoPending, setPhotoPending] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [namePending, setNamePending] = useState(false)
 
   async function load() {
     const response = await fetch('/api/profil')
@@ -39,6 +41,7 @@ export default function ProfilPage() {
       return
     }
     setStats(data)
+    setNameDraft(data.me.name)
   }
 
   useEffect(() => {
@@ -97,6 +100,35 @@ export default function ProfilPage() {
     }
   }
 
+  async function saveName() {
+    if (!stats) {
+      return
+    }
+    const next = nameDraft.trim()
+    if (!next || next === stats.me.name) {
+      return
+    }
+    setNamePending(true)
+    setError('')
+    try {
+      const response = await fetch('/api/profil', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: next }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Pseudo impossible')
+      }
+      setStats((current) => (current ? { ...current, me: { ...current.me, name: data.name } } : current))
+      setNameDraft(data.name)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur')
+    } finally {
+      setNamePending(false)
+    }
+  }
+
   if (error && !stats) {
     return (
       <main className="mx-auto w-full max-w-md px-5 py-8">
@@ -112,7 +144,27 @@ export default function ProfilPage() {
     <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 py-8">
       <h1 className="font-display text-5xl">{stats.me.name}</h1>
       <p className="font-hud tracking-[0.25em] text-gold">ID {stats.me.friendCode}</p>
-      <p className="text-sm text-mute">Donne cet ID à tes potes pour t’ajouter. Tes kills et réas restent sur ce profil.</p>
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void saveName()
+        }}
+      >
+        <input
+          value={nameDraft}
+          maxLength={20}
+          onChange={(event) => setNameDraft(event.target.value)}
+          className="flex-1 rounded-full bg-panel px-4 py-3"
+        />
+        <button
+          disabled={namePending || nameDraft.trim() === stats.me.name || nameDraft.trim().length < 1}
+          className="rounded-full bg-horizon px-4 font-semibold text-dusk disabled:opacity-50"
+        >
+          {namePending ? '…' : 'OK'}
+        </button>
+      </form>
+      <p className="text-sm text-mute">Donne cet ID à tes potes pour t’ajouter. Le pseudo sert pour les prochaines sessions.</p>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
       <PhotoPicker
         value={stats.me.photoData}

@@ -3,12 +3,15 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { PresenceAvatar } from '@/components/presence-avatar'
+import { isPlayerLive } from '@/lib/presence'
 
 type FriendRow = {
   friendshipId: string
   status: string
   incoming: boolean
   unreadCount?: number
+  lastMessage?: { body: string; fromMe: boolean } | null
+  liveSession?: { code: string; lastSeenAt: string | null } | null
   user: { id: string; name: string; friendCode: string; photoData?: string | null; lastSeenAt?: string | null }
 }
 
@@ -76,10 +79,24 @@ export default function AmisPage() {
             {row.status === 'accepted' ? (
               <div className="flex items-center gap-3 rounded-2xl bg-panel px-4 py-3">
                 <PresenceAvatar photoData={row.user.photoData} lastSeenAt={row.user.lastSeenAt} size={40} />
-                <Link href={`/profil/${row.user.friendCode}`} className="min-w-0 flex-1">
-                  <p className="font-semibold">{row.user.name}</p>
-                  <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
-                </Link>
+                <div className="min-w-0 flex-1">
+                  <Link href={`/profil/${row.user.friendCode}`}>
+                    <p className="font-semibold">{row.user.name}</p>
+                    {row.lastMessage ? (
+                      <p className={`truncate text-sm ${(row.unreadCount ?? 0) > 0 ? 'text-ink' : 'text-mute'}`}>
+                        {row.lastMessage.fromMe ? 'Toi : ' : ''}
+                        {row.lastMessage.body}
+                      </p>
+                    ) : (
+                      <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
+                    )}
+                  </Link>
+                  {row.liveSession && showFriendSession(row) ? (
+                    <Link href={`/session/${row.liveSession.code}`} className="mt-1 inline-block font-hud text-[11px] tracking-widest text-rez">
+                      EN LIGNE · {row.liveSession.code}
+                    </Link>
+                  ) : null}
+                </div>
                 <Link href={`/amis/${row.user.friendCode}`} className="relative shrink-0 text-sm text-horizon">
                   Message
                   {(row.unreadCount ?? 0) > 0 ? (
@@ -136,4 +153,11 @@ export default function AmisPage() {
       </ul>
     </main>
   )
+}
+
+function showFriendSession(row: FriendRow) {
+  if (!row.liveSession) {
+    return false
+  }
+  return isPlayerLive(row.user.lastSeenAt) || isPlayerLive(row.liveSession.lastSeenAt)
 }

@@ -681,6 +681,39 @@ export async function confirmOwnScore(code: string, gameId: string, playerId: st
   return getSessionDto(session.code, playerId)
 }
 
+export async function unconfirmOwnScore(code: string, gameId: string, playerId: string): Promise<SessionDTO> {
+  const db = getDb()
+  const session = await requireOpenSession(code)
+  const game = await requireGame(session.id, gameId)
+  if (game.status !== 'open') {
+    throw new ApiError(409, 'Game déjà clôturée')
+  }
+  const [row] = await db
+    .select()
+    .from(scores)
+    .where(and(eq(scores.gameId, game.id), eq(scores.playerId, playerId)))
+    .limit(1)
+  if (!row) {
+    throw new ApiError(404, 'Score introuvable')
+  }
+  if (!row.confirmedAt) {
+    throw new ApiError(409, 'Score pas encore confirmé')
+  }
+  await db.update(scores).set({ confirmedAt: null }).where(eq(scores.id, row.id))
+  const roster = await db.select().from(players).where(eq(players.sessionId, session.id))
+  const you = roster.find((player) => player.id === playerId)
+  const host = roster.find((player) => player.isHost)
+  if (host?.userId && host.id !== playerId && you) {
+    await notifyUser(host.userId, {
+      type: 'confirm',
+      title: `${you.name} modifie ses scores`,
+      href: `/session/${session.code}`,
+      body: 'La clôture est de nouveau bloquée.',
+    })
+  }
+  return getSessionDto(session.code, playerId)
+}
+
 export async function sendSessionPing(
   code: string,
   playerId: string,
