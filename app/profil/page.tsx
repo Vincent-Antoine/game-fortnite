@@ -32,6 +32,12 @@ export default function ProfilPage() {
   const [photoPending, setPhotoPending] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [namePending, setNamePending] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [emailDraft, setEmailDraft] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [securityPending, setSecurityPending] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
 
   async function load() {
     const response = await fetch('/api/profil')
@@ -42,6 +48,7 @@ export default function ProfilPage() {
     }
     setStats(data)
     setNameDraft(data.me.name)
+    setEmailDraft(data.me.email)
   }
 
   useEffect(() => {
@@ -129,6 +136,57 @@ export default function ProfilPage() {
     }
   }
 
+  async function saveSecurity() {
+    setSecurityPending(true)
+    setError('')
+    try {
+      const response = await fetch('/api/profil/security', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword,
+          email: emailDraft !== stats?.me.email ? emailDraft : undefined,
+          password: newPassword || undefined,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Impossible')
+      }
+      setCurrentPassword('')
+      setNewPassword('')
+      if (data.email) {
+        setStats((current) => (current ? { ...current, me: { ...current.me, email: data.email } } : current))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur')
+    } finally {
+      setSecurityPending(false)
+    }
+  }
+
+  async function wipeAccount() {
+    if (!window.confirm('Supprimer définitivement ton compte ?')) {
+      return
+    }
+    setError('')
+    try {
+      const response = await fetch('/api/profil', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: deletePassword }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Suppression impossible')
+      }
+      router.push('/')
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur')
+    }
+  }
+
   if (error && !stats) {
     return (
       <main className="mx-auto w-full max-w-md px-5 py-8">
@@ -165,6 +223,16 @@ export default function ProfilPage() {
         </button>
       </form>
       <p className="text-sm text-mute">Donne cet ID à tes potes pour t’ajouter. Le pseudo sert pour les prochaines sessions.</p>
+      <button
+        type="button"
+        className="text-left text-sm text-horizon underline"
+        onClick={() => {
+          const url = `${window.location.origin}/ami/${stats.me.friendCode}`
+          void navigator.clipboard.writeText(url).then(() => setCopied(true))
+        }}
+      >
+        {copied ? 'Lien copié' : 'Copier le lien d’ajout (iMessage)'}
+      </button>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
       <PhotoPicker
         value={stats.me.photoData}
@@ -218,6 +286,61 @@ export default function ProfilPage() {
       >
         Déconnexion
       </button>
+      <section className="rounded-3xl bg-panel p-4">
+        <p className="font-hud text-xs tracking-[0.2em] text-gold">EMAIL / MOT DE PASSE</p>
+        <form
+          className="mt-3 flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void saveSecurity()
+          }}
+        >
+          <input
+            type="email"
+            value={emailDraft}
+            onChange={(event) => setEmailDraft(event.target.value)}
+            className="rounded-full bg-dusk px-4 py-3"
+          />
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            placeholder="Nouveau mot de passe (optionnel)"
+            className="rounded-full bg-dusk px-4 py-3"
+          />
+          <input
+            required
+            type="password"
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+            placeholder="Mot de passe actuel"
+            className="rounded-full bg-dusk px-4 py-3"
+          />
+          <button disabled={securityPending} className="rounded-full bg-horizon py-3 font-semibold text-dusk disabled:opacity-50">
+            {securityPending ? '…' : 'Enregistrer'}
+          </button>
+        </form>
+      </section>
+      <section className="rounded-3xl bg-panel p-4">
+        <p className="font-hud text-xs tracking-[0.2em] text-kill">SUPPRIMER LE COMPTE</p>
+        <form
+          className="mt-3 flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void wipeAccount()
+          }}
+        >
+          <input
+            required
+            type="password"
+            value={deletePassword}
+            onChange={(event) => setDeletePassword(event.target.value)}
+            placeholder="Ton mot de passe"
+            className="rounded-full bg-dusk px-4 py-3"
+          />
+          <button className="text-sm text-kill underline">Supprimer définitivement</button>
+        </form>
+      </section>
     </main>
   )
 }

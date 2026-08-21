@@ -63,6 +63,18 @@ export default function AmisPage() {
     <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 py-8">
       <h1 className="font-display text-5xl">AMIS</h1>
       {me ? <p className="font-hud tracking-[0.2em] text-gold">TON ID {me}</p> : null}
+      {me ? (
+        <button
+          type="button"
+          className="text-left text-sm text-horizon underline"
+          onClick={() => {
+            const url = `${window.location.origin}/ami/${me}`
+            void navigator.clipboard.writeText(url)
+          }}
+        >
+          Copier le lien d’ajout (iMessage)
+        </button>
+      ) : null}
       <form onSubmit={add} className="flex gap-2">
         <input
           value={code}

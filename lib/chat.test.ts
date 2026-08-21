@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   allScoresConfirmed,
+  isTyping,
   pingTooSoon,
   resolveSessionPing,
   sanitizeMessage,
@@ -54,5 +55,14 @@ describe('allScoresConfirmed', () => {
       ]),
     ).toBe(true)
     expect(allScoresConfirmed([])).toBe(false)
+  })
+})
+
+describe('isTyping', () => {
+  it('est vrai seulement quelques secondes', () => {
+    const now = Date.parse('2026-08-21T13:00:04Z')
+    expect(isTyping(new Date('2026-08-21T13:00:01Z'), now)).toBe(true)
+    expect(isTyping(new Date('2026-08-21T12:59:59Z'), now)).toBe(false)
+    expect(isTyping(null, now)).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, or, count } from 'drizzle-orm'
 import { ApiError } from '@/lib/errors'
-import { getAuthUser, hashToken, newToken, setUserCookie } from '@/lib/auth'
+import { getAuthUser, hashToken, newToken, setUserCookie, clearUserCookie } from '@/lib/auth'
 import { normalizeCode, randomCode } from '@/lib/code'
 import { getDb } from '@/lib/db'
 import {
@@ -17,7 +17,7 @@ import {
   users,
   directMessages,
 } from '@/lib/db/schema'
-import { sanitizeMessage } from '@/lib/chat'
+import { isTyping, sanitizeMessage } from '@/lib/chat'
 import { sanitizePhoto } from '@/lib/photo'
 import { emptyCareer, personalRecords, sortCareers, withMoneyLabels, type Career, type GameRecord } from '@/lib/career'
 import { notifyUser } from '@/lib/notify'
@@ -348,6 +348,7 @@ export async function listDirectMessages(friendCode: string) {
       photoData: other.photoData,
       lastSeenAt: other.lastSeenAt ? other.lastSeenAt.toISOString() : null,
     },
+    typing: other.typingToUserId === me.id && isTyping(other.typingAt),
     messages: rows
       .slice()
       .reverse()
@@ -474,6 +475,58 @@ export async function setAccountName(name: string) {
   const db = getDb()
   await db.update(users).set({ name: cleaned }).where(eq(users.id, me.id))
   return { name: cleaned }
+}
+
+export async function setTyping(friendCode: string) {
+  const { me, other } = await requireAcceptedFriend(friendCode)
+  const db = getDb()
+  await db.update(users).set({ typingToUserId: other.id, typingAt: new Date() }).where(eq(users.id, me.id))
+  return { ok: true }
+}
+
+export async function updateAccountSecurity(input: {
+  currentPassword: string
+  email?: string
+  password?: string
+}) {
+  const me = await requireUser()
+  const db = getDb()
+  const [row] = await db.select().from(users).where(eq(users.id, me.id)).limit(1)
+  if (!row || !(await verifyPassword(input.currentPassword, row.passwordHash))) {
+    throw new ApiError(401, 'Mot de passe actuel incorrect')
+  }
+  const patch: { email?: string; passwordHash?: string } = {}
+  if (input.email) {
+    const email = sanitizeEmail(input.email)
+    const [taken] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1)
+    if (taken && taken.id !== me.id) {
+      throw new ApiError(409, 'Cet email a déjà un compte')
+    }
+    patch.email = email
+  }
+  if (input.password) {
+    if (input.password.length < 6) {
+      throw new ApiError(400, 'Mot de passe 6 caractères minimum')
+    }
+    patch.passwordHash = await hashPassword(input.password)
+  }
+  if (!patch.email && !patch.passwordHash) {
+    throw new ApiError(400, 'Rien à changer')
+  }
+  await db.update(users).set(patch).where(eq(users.id, me.id))
+  return { email: patch.email ?? me.email }
+}
+
+export async function deleteAccount(password: string) {
+  const me = await requireUser()
+  const db = getDb()
+  const [row] = await db.select().from(users).where(eq(users.id, me.id)).limit(1)
+  if (!row || !(await verifyPassword(password, row.passwordHash))) {
+    throw new ApiError(401, 'Mot de passe incorrect')
+  }
+  await db.delete(users).where(eq(users.id, me.id))
+  await clearUserCookie()
+  return { ok: true }
 }
 
 export async function getPlayerProfile(friendCode: string) {

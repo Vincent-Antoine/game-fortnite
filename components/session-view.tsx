@@ -151,6 +151,7 @@ export function SessionView({ code }: Props) {
 
   const openGame = session?.games.find((game) => game.status === 'open')
   const closedGames = session?.games.filter((game) => game.status === 'closed') ?? []
+  const youAreHost = Boolean(session?.players.some((player) => player.id === session.youPlayerId && player.isHost))
   const board = useMemo(() => (session ? liveBoard(session) : []), [session])
 
   async function mutate(path: string, init?: RequestInit) {
@@ -525,6 +526,23 @@ export function SessionView({ code }: Props) {
                       {confirmed ? 'CONFIRMÉ' : 'EN ATTENTE'}
                     </p>
                   )}
+                  {youAreHost && session.status === 'open' ? (
+                    <HostPlayerActions
+                      name={player.name}
+                      canKick={!player.isHost && player.id !== session.youPlayerId}
+                      onRename={(name) =>
+                        void run('rename', () =>
+                          mutate(`/api/sessions/${code}/players/${player.id}`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ name }),
+                          }),
+                        )
+                      }
+                      onKick={() =>
+                        void run('kick', () => mutate(`/api/sessions/${code}/players/${player.id}`, { method: 'DELETE' }))
+                      }
+                    />
+                  ) : null}
                 </div>
               </article>
             )
@@ -638,6 +656,22 @@ export function SessionView({ code }: Props) {
         </section>
       </div>
 
+      {session.status === 'open' ? (
+        <section className="rounded-3xl bg-panel p-4">
+          <p className="font-hud text-xs tracking-[0.2em] text-gold">LIEN DE SESSION</p>
+          <button
+            type="button"
+            className="mt-2 text-sm text-horizon underline"
+            onClick={() => {
+              const url = `${window.location.origin}/session/${code}`
+              void navigator.clipboard.writeText(url).then(() => setToast('Lien de session copié'))
+            }}
+          >
+            Copier le lien (iMessage)
+          </button>
+        </section>
+      ) : null}
+
       {session.status === 'open' && friends.length > 0 ? (
         <section className="rounded-3xl bg-panel p-4">
           <p className="font-hud text-xs tracking-[0.2em] text-gold">INVITER UN AMI</p>
@@ -667,6 +701,34 @@ export function SessionView({ code }: Props) {
             ))}
           </div>
         </section>
+      ) : null}
+
+      {session.status === 'open' && youAreHost && !openGame ? (
+        <ul className="flex flex-col gap-2">
+          {session.players.map((player) => (
+            <li key={player.id} className="flex items-center justify-between gap-2 rounded-2xl bg-panel px-4 py-3">
+              <p>
+                {player.name}
+                {player.isHost ? ' · hôte' : ''}
+              </p>
+              <HostPlayerActions
+                name={player.name}
+                canKick={!player.isHost && player.id !== session.youPlayerId}
+                onRename={(name) =>
+                  void run('rename', () =>
+                    mutate(`/api/sessions/${code}/players/${player.id}`, {
+                      method: 'PATCH',
+                      body: JSON.stringify({ name }),
+                    }),
+                  )
+                }
+                onKick={() =>
+                  void run('kick', () => mutate(`/api/sessions/${code}/players/${player.id}`, { method: 'DELETE' }))
+                }
+              />
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       {session.status === 'open' ? (
@@ -806,6 +868,48 @@ function LiveAvatar({ player, size = 48 }: { player: PlayerRef; size?: number })
         <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-rez ring-2 ring-panel" />
       ) : null}
     </span>
+  )
+}
+
+function HostPlayerActions({
+  name,
+  canKick,
+  onRename,
+  onKick,
+}: {
+  name: string
+  canKick: boolean
+  onRename: (name: string) => void
+  onKick: () => void
+}) {
+  return (
+    <div className="mt-2 flex justify-end gap-3">
+      <button
+        type="button"
+        className="text-xs text-horizon underline"
+        onClick={() => {
+          const next = window.prompt('Nouveau pseudo', name)
+          if (next && next.trim() && next.trim() !== name) {
+            onRename(next)
+          }
+        }}
+      >
+        Renommer
+      </button>
+      {canKick ? (
+        <button
+          type="button"
+          className="text-xs text-kill underline"
+          onClick={() => {
+            if (window.confirm(`Retirer ${name} de la session ?`)) {
+              onKick()
+            }
+          }}
+        >
+          Retirer
+        </button>
+      ) : null}
+    </div>
   )
 }
 

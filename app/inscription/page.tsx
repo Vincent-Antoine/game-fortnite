@@ -1,10 +1,20 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useState, type FormEvent } from 'react'
+import { Suspense, useState, type FormEvent } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 export default function InscriptionPage() {
+  return (
+    <Suspense fallback={<main className="p-8 text-mute">Chargement…</main>}>
+      <InscriptionForm />
+    </Suspense>
+  )
+}
+
+function InscriptionForm() {
   const router = useRouter()
+  const search = useSearchParams()
+  const ami = search.get('ami')?.toUpperCase() ?? ''
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -26,7 +36,16 @@ export default function InscriptionPage() {
       setError(data.error ?? 'Inscription impossible')
       return
     }
-    router.push('/profil')
+    if (ami) {
+      await fetch('/api/friends', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: ami }),
+      })
+      router.push('/amis')
+    } else {
+      router.push('/profil')
+    }
     router.refresh()
   }
 

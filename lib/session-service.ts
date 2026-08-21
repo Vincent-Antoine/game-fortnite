@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { and, asc, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { colorForIndex } from '@/lib/colors'
 import { sanitizeAvatar } from '@/lib/avatars'
 import { allScoresConfirmed, pingTooSoon, resolveSessionPing } from '@/lib/chat'
@@ -757,4 +757,76 @@ export async function sendSessionPing(
     }),
   )
   return getSessionDto(session.code, playerId)
+}
+
+async function requireHost(code: string, hostPlayerId: string) {
+  const db = getDb()
+  const session = await requireOpenSession(code)
+  const [host] = await db
+    .select()
+    .from(players)
+    .where(and(eq(players.id, hostPlayerId), eq(players.sessionId, session.id)))
+    .limit(1)
+  if (!host?.isHost) {
+    throw new ApiError(403, 'Seul l’hôte peut faire ça')
+  }
+  return { db, session, host }
+}
+
+export async function renamePlayer(
+  code: string,
+  hostPlayerId: string,
+  playerId: string,
+  name: string,
+): Promise<SessionDTO> {
+  const { db, session } = await requireHost(code, hostPlayerId)
+  const cleaned = sanitizeName(name)
+  const roster = await db.select().from(players).where(eq(players.sessionId, session.id))
+  const target = roster.find((player) => player.id === playerId)
+  if (!target) {
+    throw new ApiError(404, 'Joueur introuvable')
+  }
+  if (roster.some((player) => player.id !== playerId && player.name.toLowerCase() === cleaned.toLowerCase())) {
+    throw new ApiError(409, 'Ce pseudo est déjà pris')
+  }
+  await db.update(players).set({ name: cleaned }).where(eq(players.id, playerId))
+  return getSessionDto(session.code, hostPlayerId)
+}
+
+export async function kickPlayer(code: string, hostPlayerId: string, playerId: string): Promise<SessionDTO> {
+  const { db, session } = await requireHost(code, hostPlayerId)
+  if (playerId === hostPlayerId) {
+    throw new ApiError(400, 'Tu ne peux pas te retirer')
+  }
+  const [target] = await db
+    .select()
+    .from(players)
+    .where(and(eq(players.id, playerId), eq(players.sessionId, session.id)))
+    .limit(1)
+  if (!target) {
+    throw new ApiError(404, 'Joueur introuvable')
+  }
+  if (target.isHost) {
+    throw new ApiError(403, 'Impossible de retirer l’hôte')
+  }
+  const closed = await db
+    .select({ id: games.id })
+    .from(games)
+    .where(and(eq(games.sessionId, session.id), eq(games.status, 'closed')))
+  if (closed.length > 0) {
+    const closedIds = closed.map((row) => row.id)
+    const played = await db
+      .select({ id: scores.id })
+      .from(scores)
+      .where(and(eq(scores.playerId, playerId), inArray(scores.gameId, closedIds)))
+      .limit(1)
+    if (played.length > 0) {
+      throw new ApiError(409, 'Déjà dans une game clôturée. Tu peux juste renommer.')
+    }
+  }
+  await db.update(games).set({ firstKillPlayerId: null }).where(eq(games.firstKillPlayerId, playerId))
+  await db.delete(gamePowers).where(or(eq(gamePowers.playerId, playerId), eq(gamePowers.targetPlayerId, playerId)))
+  await db.delete(scores).where(eq(scores.playerId, playerId))
+  await db.delete(players).where(eq(players.id, playerId))
+  return getSessionDto(session.code, hostPlayerId)
 }

@@ -45,3 +45,16 @@ export function allScoresConfirmed(rows: { confirmedAt: string | Date | null }[]
   }
   return rows.every((row) => Boolean(row.confirmedAt))
 }
+
+export const TYPING_WINDOW_MS = 4_000
+
+export function isTyping(lastAt: Date | string | null | undefined, now = Date.now()): boolean {
+  if (!lastAt) {
+    return false
+  }
+  const stamp = lastAt instanceof Date ? lastAt.getTime() : Date.parse(lastAt)
+  if (!Number.isFinite(stamp)) {
+    return false
+  }
+  return now - stamp < TYPING_WINDOW_MS
+}

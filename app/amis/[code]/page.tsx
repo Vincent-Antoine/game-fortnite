@@ -15,6 +15,8 @@ export default function FriendChatPage() {
     photoData?: string | null
     lastSeenAt?: string | null
   } | null>(null)
+  const [typing, setTyping] = useState(false)
+  const typingPing = useRef(0)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
@@ -31,6 +33,7 @@ export default function FriendChatPage() {
     setError('')
     setFriend(data.friend)
     setMessages(data.messages)
+    setTyping(Boolean(data.typing))
   }
 
   useEffect(() => {
@@ -94,6 +97,7 @@ export default function FriendChatPage() {
             <PresenceAvatar photoData={friend.photoData} lastSeenAt={friend.lastSeenAt} size={48} />
           ) : null}
           <h1 className="font-display text-5xl">{friend?.name ?? '…'}</h1>
+          {typing ? <p className="text-sm text-rez">écrit…</p> : null}
         </div>
         {friend ? (
           <Link href={`/profil/${friend.friendCode}`} className="text-sm text-horizon underline">
@@ -123,7 +127,14 @@ export default function FriendChatPage() {
         <input
           value={draft}
           maxLength={500}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            if (Date.now() - typingPing.current < 1200) {
+              return
+            }
+            typingPing.current = Date.now()
+            void fetch(`/api/friends/${params.code}/typing`, { method: 'POST' })
+          }}
           placeholder="Écris un message"
           className="flex-1 rounded-full bg-panel px-4 py-3"
         />
