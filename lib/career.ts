@@ -13,9 +13,21 @@ export type Career = {
   wonCents: number
   lostCents: number
   netCents: number
+  bestGame: number
+  winStreak: number
+  worstNightCents: number
 }
 
 export type CareerSort = 'points' | 'kills' | 'revives' | 'firstKills' | 'netCents' | 'games'
+
+export type GameRecord = {
+  gameId: string
+  sessionId: string
+  closedAt: number
+  points: number
+  won: boolean
+  lostCents: number
+}
 
 export function emptyCareer(user: { id: string; name: string; friendCode: string }): Career {
   return {
@@ -31,6 +43,9 @@ export function emptyCareer(user: { id: string; name: string; friendCode: string
     wonCents: 0,
     lostCents: 0,
     netCents: 0,
+    bestGame: 0,
+    winStreak: 0,
+    worstNightCents: 0,
   }
 }
 
@@ -50,5 +65,33 @@ export function withMoneyLabels(career: Career) {
     wonLabel: formatCents(career.wonCents),
     lostLabel: formatCents(career.lostCents),
     netLabel: formatCents(career.netCents),
+    worstNightLabel: formatCents(career.worstNightCents),
+  }
+}
+
+export function personalRecords(games: GameRecord[]): {
+  bestGame: number
+  winStreak: number
+  worstNightCents: number
+} {
+  const ordered = [...games].sort((a, b) => a.closedAt - b.closedAt)
+  let bestGame = 0
+  let winStreak = 0
+  let current = 0
+  const nightLost = new Map<string, number>()
+  for (const game of ordered) {
+    bestGame = Math.max(bestGame, game.points)
+    if (game.won) {
+      current += 1
+      winStreak = Math.max(winStreak, current)
+    } else {
+      current = 0
+    }
+    nightLost.set(game.sessionId, (nightLost.get(game.sessionId) ?? 0) + game.lostCents)
+  }
+  return {
+    bestGame,
+    winStreak,
+    worstNightCents: Math.max(0, ...nightLost.values(), 0),
   }
 }

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { sortCareers, type Career, type CareerSort } from '@/lib/career'
+import { type SeasonRange } from '@/lib/season'
 
 type Row = Career & { netLabel: string }
 
@@ -15,14 +16,26 @@ const SORTS: { id: CareerSort; label: string }[] = [
   { id: 'games', label: 'GAMES' },
 ]
 
+const RANGES: { id: SeasonRange; label: string }[] = [
+  { id: 'week', label: 'SEMAINE' },
+  { id: 'month', label: 'MOIS' },
+  { id: 'all', label: 'TOUT' },
+]
+
 export default function ClassementPage() {
   const [meId, setMeId] = useState('')
   const [rows, setRows] = useState<Row[]>([])
   const [sort, setSort] = useState<CareerSort>('points')
+  const [range, setRange] = useState<SeasonRange>('month')
   const [error, setError] = useState('')
+  const monthLabel = new Intl.DateTimeFormat('fr-FR', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Europe/Paris',
+  }).format(new Date())
 
   useEffect(() => {
-    void fetch('/api/classement')
+    void fetch(`/api/classement?range=${range}`)
       .then(async (response) => {
         const data = await response.json()
         if (!response.ok) {
@@ -32,7 +45,7 @@ export default function ClassementPage() {
         setMeId(data.meId)
         setRows(data.rows)
       })
-  }, [])
+  }, [range])
 
   const ranked = useMemo(() => sortCareers(rows, sort), [rows, sort])
 
@@ -48,7 +61,24 @@ export default function ClassementPage() {
     <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 py-8">
       <p className="font-hud text-[11px] tracking-[0.35em] text-horizon">SQUAD</p>
       <h1 className="font-display text-5xl">CLASSEMENT</h1>
-      <p className="text-sm text-mute">Toi contre tes potes. Les stats viennent des games clôturées liées au compte.</p>
+      <p className="text-sm text-mute">
+        {range === 'month' ? `Saison ${monthLabel}` : range === 'week' ? 'Cette semaine' : 'Depuis toujours'}. Games
+        clôturées liées au compte.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {RANGES.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => setRange(option.id)}
+            className={`rounded-full px-3 py-1.5 font-hud text-xs tracking-widest ${
+              range === option.id ? 'bg-gold text-dusk' : 'bg-panel text-mute'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       <div className="flex flex-wrap gap-2">
         {SORTS.map((option) => (
           <button

@@ -16,6 +16,9 @@ type Stats = {
   wonLabel: string
   lostLabel: string
   netLabel: string
+  bestGame: number
+  winStreak: number
+  worstNightLabel: string
   history: { code: string; wonCents: number; lostCents: number; games: number; isHost: boolean }[]
 }
 

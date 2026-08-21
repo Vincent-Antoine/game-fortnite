@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { AvatarPicker } from '@/components/avatar'
 import { PhotoPicker } from '@/components/photo-picker'
 import { parseStakeToCents } from '@/lib/money'
@@ -20,6 +20,17 @@ export function HomeView() {
   const [pending, setPending] = useState(false)
 
   const stakeCents = useMemo(() => parseStakeToCents(stake), [stake])
+
+  useEffect(() => {
+    void fetch('/api/me')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (data?.user?.name) {
+          setName((current) => current || data.user.name)
+        }
+      })
+      .catch(() => undefined)
+  }, [])
 
   async function submit(event: FormEvent) {
     event.preventDefault()

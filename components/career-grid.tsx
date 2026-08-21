@@ -8,6 +8,9 @@ type CareerView = {
   wonLabel: string
   lostLabel: string
   netLabel: string
+  bestGame?: number
+  winStreak?: number
+  worstNightLabel?: string
 }
 
 export function CareerGrid({ stats }: { stats: CareerView }) {
@@ -21,6 +24,9 @@ export function CareerGrid({ stats }: { stats: CareerView }) {
       <StatCard label="PERDU" value={stats.lostLabel} accent="kill" />
       <StatCard label="NET" value={stats.netLabel} />
       <StatCard label="GAMES" value={`${stats.games} · ${stats.sessions} sess.`} />
+      <StatCard label="BEST GAME" value={stats.bestGame ?? 0} accent="gold" />
+      <StatCard label="SÉRIE WINS" value={stats.winStreak ?? 0} accent="horizon" />
+      <StatCard label="PIRE SOIR" value={stats.worstNightLabel ?? '0,00 €'} accent="kill" />
     </div>
   )
 }

@@ -91,6 +91,7 @@ export const players = pgTable(
     isHost: boolean('is_host').notNull().default(false),
     color: text('color').notNull(),
     tokenHash: text('token_hash'),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex('players_session_name').on(table.sessionId, table.name)],

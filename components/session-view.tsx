@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AvatarPicker, PlayerAvatar } from '@/components/avatar'
 import { PhotoPicker } from '@/components/photo-picker'
 import { formatCents } from '@/lib/money'
+import { isPlayerLive } from '@/lib/presence'
 import { modifiedPoints } from '@/lib/scoring'
 import type { SessionDTO } from '@/lib/types'
 
@@ -26,16 +27,17 @@ export function SessionView({ code }: Props) {
   const [friends, setFriends] = useState<{ user: { id: string; name: string }; status: string }[]>([])
   const skipPoll = useRef(0)
   const saveTimer = useRef(0)
-  const pendingDeltas = useRef<Record<string, { kills: number; revives: number }>>({})
-  const flushTimer = useRef(0)
+  const scoreTimer = useRef(0)
+  const editingPlayers = useRef(new Set<string>())
   const sessionRef = useRef<SessionDTO | null>(null)
   const scrolledToHistory = useRef(false)
+  const [showRules, setShowRules] = useState(false)
   sessionRef.current = session
 
   const mergeRemote = useCallback((remote: SessionDTO) => {
     const local = sessionRef.current
-    const pending = pendingDeltas.current
-    if (!local || Object.keys(pending).length === 0) {
+    const editing = editingPlayers.current
+    if (!local || editing.size === 0) {
       return remote
     }
     const localOpen = local.games.find((game) => game.status === 'open')
@@ -49,12 +51,11 @@ export function SessionView({ code }: Props) {
         game.id === remoteOpen.id
           ? {
               ...game,
-              scores: game.scores.map((row) => {
-                if (!pending[row.playerId]) {
-                  return row
-                }
-                return localOpen.scores.find((score) => score.playerId === row.playerId) ?? row
-              }),
+              scores: game.scores.map((row) =>
+                editing.has(row.playerId)
+                  ? (localOpen.scores.find((score) => score.playerId === row.playerId) ?? row)
+                  : row,
+              ),
             }
           : game,
       ),
@@ -101,6 +102,32 @@ export function SessionView({ code }: Props) {
       .catch(() => undefined)
     return () => window.clearInterval(timer)
   }, [load])
+
+  useEffect(() => {
+    if (!session?.youPlayerId) {
+      return
+    }
+    void fetch(`/api/sessions/${code}/presence`, { method: 'POST' })
+    const timer = window.setInterval(() => {
+      if (!document.hidden) {
+        void fetch(`/api/sessions/${code}/presence`, { method: 'POST' })
+      }
+    }, 8000)
+    return () => window.clearInterval(timer)
+  }, [code, session?.youPlayerId])
+
+  useEffect(() => {
+    if (!session?.youPlayerId) {
+      return
+    }
+    try {
+      if (!window.localStorage.getItem(`dr_rules_${session.code}`)) {
+        setShowRules(true)
+      }
+    } catch {
+      setShowRules(true)
+    }
+  }, [session?.youPlayerId, session?.code])
 
   useEffect(() => {
     if (!session || scrolledToHistory.current || window.location.hash !== '#historique') {
@@ -167,55 +194,41 @@ export function SessionView({ code }: Props) {
     }, 280) as unknown as number
   }
 
-  function flushNudges() {
-    const game = sessionRef.current?.games.find((row) => row.status === 'open')
-    if (!game) {
-      return
-    }
-    const queued = pendingDeltas.current
-    pendingDeltas.current = {}
-    for (const [playerId, delta] of Object.entries(queued)) {
-      if (delta.kills === 0 && delta.revives === 0) {
-        continue
-      }
-      void fetch(`/api/sessions/${code}/games/${game.id}/nudge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playerId,
-          killsDelta: delta.kills,
-          revivesDelta: delta.revives,
-        }),
-      })
-        .then(async (response) => {
-          const data = await response.json()
-          if (!response.ok) {
-            throw new Error(data.error ?? 'Score non enregistré')
-          }
-          setSession(mergeRemote(data))
-        })
-        .catch((err: Error) => setError(err.message))
-    }
-  }
-
-  function bump(playerId: string, field: 'kills' | 'revives', delta: number) {
+  function commitScore(playerId: string, field: 'kills' | 'revives', raw: string) {
     if (!session || !openGame) {
       return
     }
-    const scores = openGame.scores.map((row) =>
-      row.playerId === playerId
-        ? { ...row, [field]: Math.max(0, Math.min(99, row[field] + delta)) }
-        : row,
-    )
-    const current = pendingDeltas.current[playerId] ?? { kills: 0, revives: 0 }
-    current[field] += delta
-    pendingDeltas.current[playerId] = current
+    const parsed = Number.parseInt(raw, 10)
+    const value = Number.isFinite(parsed) ? Math.max(0, Math.min(99, parsed)) : 0
+    const current = openGame.scores.find((row) => row.playerId === playerId) ?? {
+      playerId,
+      kills: 0,
+      revives: 0,
+    }
+    const nextScore = { ...current, [field]: value }
+    const scores = openGame.scores.map((row) => (row.playerId === playerId ? nextScore : row))
+    const hasRow = openGame.scores.some((row) => row.playerId === playerId)
+    const nextScores = hasRow ? scores : [...openGame.scores, nextScore]
     setSession({
       ...session,
-      games: session.games.map((game) => (game.id === openGame.id ? { ...game, scores } : game)),
+      games: session.games.map((game) => (game.id === openGame.id ? { ...game, scores: nextScores } : game)),
     })
-    window.clearTimeout(flushTimer.current)
-    flushTimer.current = window.setTimeout(flushNudges, 140) as unknown as number
+    skipPoll.current = Date.now() + 1500
+    window.clearTimeout(scoreTimer.current)
+    scoreTimer.current = window.setTimeout(() => {
+      const game = sessionRef.current?.games.find((row) => row.status === 'open')
+      if (!game) {
+        return
+      }
+      const saved = game.scores.find((row) => row.playerId === playerId) ?? nextScore
+      void mutate(`/api/sessions/${code}/games/${game.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          firstKillPlayerId: game.firstKillPlayerId,
+          scores: [saved],
+        }),
+      }).catch((err: Error) => setError(err.message))
+    }, 280) as unknown as number
   }
 
   function setFirstKill(playerId: string) {
@@ -244,7 +257,7 @@ export function SessionView({ code }: Props) {
   }
 
   return (
-    <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col gap-6 px-4 pb-16 pt-6">
+    <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col gap-6 px-4 pb-28 pt-6">
       <header className="flex items-start justify-between gap-3">
         <div>
           <p className="font-hud text-[11px] tracking-[0.35em] text-horizon">DETTE ROYALE</p>
@@ -262,6 +275,35 @@ export function SessionView({ code }: Props) {
 
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
       {toast ? <p className="rounded-2xl bg-rez/15 px-4 py-3 text-sm text-rez">{toast}</p> : null}
+      {showRules ? (
+        <div className="fixed inset-0 z-50 grid place-items-end bg-black/55 p-4 sm:place-items-center">
+          <article className="w-full max-w-md rounded-3xl bg-panel p-5">
+            <p className="font-hud text-[11px] tracking-[0.3em] text-gold">RÈGLES</p>
+            <h2 className="mt-1 font-display text-4xl">SOIRÉE</h2>
+            <ul className="mt-4 flex flex-col gap-2 text-sm leading-6">
+              <li>Mise {formatCents(session.stakeCents)} par point du gagnant.</li>
+              <li>Le dernier paie les points du premier. Les milieux ne paient rien.</li>
+              <li>À 2, le perdant paie le gagnant.</li>
+              <li>First kill départage. Sinon la dette se partage.</li>
+              <li>Pouvoirs 1 fois / session : x2, /2 un adversaire, bouclier.</li>
+            </ul>
+            <button
+              type="button"
+              className="mt-5 w-full rounded-full bg-horizon py-3 font-semibold text-dusk"
+              onClick={() => {
+                try {
+                  window.localStorage.setItem(`dr_rules_${session.code}`, '1')
+                } catch {
+                  undefined
+                }
+                setShowRules(false)
+              }}
+            >
+              C’est noté
+            </button>
+          </article>
+        </div>
+      ) : null}
 
       {!session.youPlayerId && session.status === 'open' ? (
         <section className="rounded-3xl bg-horizon p-5 text-dusk">
@@ -403,7 +445,7 @@ export function SessionView({ code }: Props) {
                 <div className="px-4 py-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <PlayerAvatar avatar={player.avatar} photoData={player.photoData} size={48} />
+                      <LiveAvatar player={player} />
                       <div>
                         <p className="text-lg font-semibold">
                           {player.name}
@@ -415,8 +457,22 @@ export function SessionView({ code }: Props) {
                     <p className="font-display text-5xl leading-none">{points}</p>
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-3">
-                    <Stepper label="Kills" value={score.kills} accent="kill" onChange={(delta) => bump(player.id, 'kills', delta)} />
-                    <Stepper label="Réas" value={score.revives} accent="rez" onChange={(delta) => bump(player.id, 'revives', delta)} />
+                    <ScoreField
+                      label="Kills"
+                      value={score.kills}
+                      accent="kill"
+                      onFocus={() => editingPlayers.current.add(player.id)}
+                      onBlur={() => editingPlayers.current.delete(player.id)}
+                      onCommit={(raw) => commitScore(player.id, 'kills', raw)}
+                    />
+                    <ScoreField
+                      label="Réas"
+                      value={score.revives}
+                      accent="rez"
+                      onFocus={() => editingPlayers.current.add(player.id)}
+                      onBlur={() => editingPlayers.current.delete(player.id)}
+                      onCommit={(raw) => commitScore(player.id, 'revives', raw)}
+                    />
                   </div>
                   <button
                     type="button"
@@ -645,7 +701,7 @@ function Scoreboard({
             style={{ boxShadow: `inset 4px 0 0 ${row.player.color}` }}
           >
             <span className="w-5 font-hud text-sm text-mute">{index + 1}</span>
-            <PlayerAvatar avatar={row.player.avatar} photoData={row.player.photoData} size={36} />
+            <LiveAvatar player={row.player} size={36} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">
                 {row.player.name}
@@ -673,31 +729,66 @@ function Scoreboard({
   )
 }
 
-function Stepper({
+function LiveAvatar({ player, size = 48 }: { player: PlayerRef; size?: number }) {
+  const live = isPlayerLive(player.lastSeenAt)
+  return (
+    <span className="relative inline-block shrink-0">
+      <PlayerAvatar avatar={player.avatar} photoData={player.photoData} size={size} />
+      {live ? (
+        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-rez ring-2 ring-panel" />
+      ) : null}
+    </span>
+  )
+}
+
+function ScoreField({
   label,
   value,
   accent,
-  onChange,
+  onFocus,
+  onBlur,
+  onCommit,
 }: {
   label: string
   value: number
   accent: 'kill' | 'rez'
-  onChange: (delta: number) => void
+  onFocus: () => void
+  onBlur: () => void
+  onCommit: (raw: string) => void
 }) {
+  const [text, setText] = useState(String(value))
+  const [focused, setFocused] = useState(false)
+  useEffect(() => {
+    if (!focused) {
+      setText(String(value))
+    }
+  }, [value, focused])
   const color = accent === 'kill' ? 'text-kill' : 'text-rez'
   return (
-    <div className="rounded-2xl bg-dusk px-3 py-3">
+    <label className="rounded-2xl bg-dusk px-3 py-3">
       <p className={`font-hud text-[10px] tracking-[0.2em] ${color}`}>{label.toUpperCase()}</p>
-      <div className="mt-1 flex items-center justify-between">
-        <button type="button" onClick={() => onChange(-1)} className="h-10 w-10 rounded-full bg-panel text-xl">
-          −
-        </button>
-        <span className="font-display text-3xl">{value}</span>
-        <button type="button" onClick={() => onChange(1)} className="h-10 w-10 rounded-full bg-panel text-xl">
-          +
-        </button>
-      </div>
-    </div>
+      <input
+        inputMode="numeric"
+        pattern="[0-9]*"
+        value={focused ? text : String(value)}
+        onFocus={() => {
+          setFocused(true)
+          setText(String(value))
+          onFocus()
+        }}
+        onBlur={() => {
+          setFocused(false)
+          onCommit(text)
+          onBlur()
+        }}
+        onChange={(event) => {
+          const next = event.target.value.replace(/\D/g, '').slice(0, 2)
+          setText(next)
+          onCommit(next === '' ? '0' : next)
+        }}
+        className="mt-1 w-full bg-transparent text-center font-display text-3xl outline-none"
+      />
+    </label>
   )
 }
 

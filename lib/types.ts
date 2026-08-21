@@ -12,6 +12,7 @@ export type SessionDTO = {
     photoData: string | null
     isHost: boolean
     color: string
+    lastSeenAt: string | null
     usedPowers: { double: boolean; shield: boolean; halve: boolean }
   }[]
   games: {

@@ -83,19 +83,33 @@ export default function AmisPage() {
                   <p className="font-hud text-xs text-mute">{row.user.friendCode}</p>
                 </div>
                 {row.incoming ? (
-                  <button
-                    type="button"
-                    className="rounded-full bg-horizon px-3 py-1 text-sm text-dusk"
-                    onClick={async () => {
-                      const response = await fetch(`/api/friends/${row.friendshipId}/accept`, { method: 'POST' })
-                      const data = await response.json()
-                      if (response.ok) {
-                        setFriends(data.friends)
-                      }
-                    }}
-                  >
-                    Accepter
-                  </button>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      className="rounded-full bg-horizon px-3 py-1 text-sm text-dusk"
+                      onClick={async () => {
+                        const response = await fetch(`/api/friends/${row.friendshipId}/accept`, { method: 'POST' })
+                        const data = await response.json()
+                        if (response.ok) {
+                          setFriends(data.friends)
+                        }
+                      }}
+                    >
+                      Accepter
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full bg-dusk px-3 py-1 text-sm text-kill"
+                      onClick={async () => {
+                        const response = await fetch(`/api/friends/${row.friendshipId}`, { method: 'DELETE' })
+                        if (response.ok) {
+                          setFriends((current) => current.filter((item) => item.friendshipId !== row.friendshipId))
+                        }
+                      }}
+                    >
+                      Refuser
+                    </button>
+                  </div>
                 ) : (
                   <span className="text-sm text-mute">En attente</span>
                 )}

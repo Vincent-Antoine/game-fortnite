@@ -16,7 +16,8 @@ import {
   userSessions,
   users,
 } from '@/lib/db/schema'
-import { emptyCareer, sortCareers, withMoneyLabels, type Career } from '@/lib/career'
+import { emptyCareer, personalRecords, sortCareers, withMoneyLabels, type Career, type GameRecord } from '@/lib/career'
+import { seasonWindow, type SeasonRange } from '@/lib/season'
 import { hashPassword, verifyPassword } from '@/lib/password'
 
 function sanitizeUserName(name: string): string {
@@ -292,14 +293,15 @@ export async function getPlayerProfile(friendCode: string) {
   }
 }
 
-export async function friendLeaderboard() {
+export async function friendLeaderboard(range: SeasonRange = 'month') {
   const { me, friends } = await listFriends()
   const people = [
     { id: me.id, name: me.name, friendCode: me.friendCode },
     ...friends.filter((row) => row.status === 'accepted').map((row) => row.user),
   ]
-  const rows = sortCareers(await careersForUsers(people), 'points').map(withMoneyLabels)
-  return { meId: me.id, rows }
+  const { from } = seasonWindow(range)
+  const rows = sortCareers(await careersForUsers(people, from), 'points').map(withMoneyLabels)
+  return { meId: me.id, range, rows }
 }
 
 async function dbUserByFriendCode(code: string) {
@@ -309,6 +311,7 @@ async function dbUserByFriendCode(code: string) {
 
 async function careersForUsers(
   people: { id: string; name: string; friendCode: string }[],
+  from: Date | null = null,
 ): Promise<Career[]> {
   const result = people.map(emptyCareer)
   if (people.length === 0) {
@@ -318,30 +321,32 @@ async function careersForUsers(
   const byId = new Map(result.map((row) => [row.userId, row]))
   const roster = await db.select().from(players).where(inArray(players.userId, people.map((row) => row.id)))
   const userByPlayer = new Map<string, string>()
-  for (const person of people) {
-    const mine = roster.filter((player) => player.userId === person.id)
-    const row = byId.get(person.id)
-    if (row) {
-      row.sessions = new Set(mine.map((player) => player.sessionId)).size
-    }
-  }
+  const playersByUser = new Map<string, string[]>()
   for (const player of roster) {
-    if (player.userId) {
-      userByPlayer.set(player.id, player.userId)
+    if (!player.userId) {
+      continue
     }
+    userByPlayer.set(player.id, player.userId)
+    const list = playersByUser.get(player.userId) ?? []
+    list.push(player.id)
+    playersByUser.set(player.userId, list)
   }
   const sessionIds = [...new Set(roster.map((player) => player.sessionId))]
   if (sessionIds.length === 0) {
     return result
   }
-  const closed = await db
+  let closed = await db
     .select()
     .from(games)
     .where(and(inArray(games.sessionId, sessionIds), eq(games.status, 'closed')))
+  if (from) {
+    closed = closed.filter((game) => (game.closedAt ?? game.createdAt) >= from)
+  }
   if (closed.length === 0) {
     return result
   }
   const gameIds = closed.map((game) => game.id)
+  const gameById = new Map(closed.map((game) => [game.id, game]))
   const allScores = await db.select().from(scores).where(inArray(scores.gameId, gameIds))
   const allTransfers = await db.select().from(transfers).where(inArray(transfers.gameId, gameIds))
   const gamesByUser = new Map<string, Set<string>>()
@@ -391,9 +396,38 @@ async function careersForUsers(
   }
 
   for (const row of result) {
-    row.games = gamesByUser.get(row.userId)?.size ?? 0
+    const played = gamesByUser.get(row.userId) ?? new Set<string>()
+    const mine = new Set(playersByUser.get(row.userId) ?? [])
+    const snapshots: GameRecord[] = []
+    for (const gameId of played) {
+      const game = gameById.get(gameId)
+      if (!game) {
+        continue
+      }
+      const points = allScores
+        .filter((score) => score.gameId === gameId && mine.has(score.playerId))
+        .reduce((sum, score) => sum + score.kills + score.revives, 0)
+      const lostCents = allTransfers
+        .filter((transfer) => transfer.gameId === gameId && mine.has(transfer.fromPlayerId))
+        .reduce((sum, transfer) => sum + transfer.amountCents, 0)
+      const won = allTransfers.some((transfer) => transfer.gameId === gameId && mine.has(transfer.toPlayerId))
+      snapshots.push({
+        gameId,
+        sessionId: game.sessionId,
+        closedAt: (game.closedAt ?? game.createdAt).getTime(),
+        points,
+        won,
+        lostCents,
+      })
+    }
+    const records = personalRecords(snapshots)
+    row.games = played.size
+    row.sessions = new Set(snapshots.map((item) => item.sessionId)).size
     row.points = row.kills + row.revives
     row.netCents = row.wonCents - row.lostCents
+    row.bestGame = records.bestGame
+    row.winStreak = records.winStreak
+    row.worstNightCents = records.worstNightCents
   }
   return result
 }

@@ -426,6 +426,7 @@ export async function getSessionDto(
       photoData: player.photoData,
       isHost: player.isHost,
       color: player.color,
+      lastSeenAt: player.lastSeenAt ? player.lastSeenAt.toISOString() : null,
       usedPowers: usedByPlayer.get(player.id) ?? { double: false, shield: false, halve: false },
     })),
     games: gameDtos,
@@ -606,4 +607,14 @@ export async function lockGamePowers(code: string, gameId: string): Promise<Sess
   const db = getDb()
   await db.update(games).set({ powersLocked: true }).where(eq(games.id, game.id))
   return getSessionDto(session.code, null)
+}
+
+export async function touchPresence(code: string, playerId?: string, token?: string): Promise<SessionDTO> {
+  const you = await identifyPlayer(code, playerId, token)
+  if (!you) {
+    throw new ApiError(401, 'Rejoins la session d’abord')
+  }
+  const db = getDb()
+  await db.update(players).set({ lastSeenAt: new Date() }).where(eq(players.id, you))
+  return getSessionDto(code, you)
 }
