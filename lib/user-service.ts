@@ -17,6 +17,7 @@ import {
   users,
 } from '@/lib/db/schema'
 import { emptyCareer, personalRecords, sortCareers, withMoneyLabels, type Career, type GameRecord } from '@/lib/career'
+import { sendPushToUser } from '@/lib/push'
 import { seasonWindow, type SeasonRange } from '@/lib/season'
 import { hashPassword, verifyPassword } from '@/lib/password'
 
@@ -97,6 +98,20 @@ function publicUser(user: { id: string; email: string; name: string; friendCode:
   return { id: user.id, email: user.email, name: user.name, friendCode: user.friendCode }
 }
 
+async function notifyUser(
+  userId: string,
+  note: { type: string; title: string; href: string; body: string },
+) {
+  const db = getDb()
+  await db.insert(notifications).values({
+    userId,
+    type: note.type,
+    title: note.title,
+    href: note.href,
+  })
+  await sendPushToUser(userId, { title: note.title, body: note.body, href: note.href })
+}
+
 export async function requireUser() {
   const user = await getAuthUser()
   if (!user) {
@@ -132,11 +147,11 @@ export async function addFriendByCode(code: string) {
     throw new ApiError(409, 'Demande déjà envoyée')
   }
   await db.insert(friendships).values({ requesterId: me.id, addresseeId: target.id, status: 'pending' })
-  await db.insert(notifications).values({
-    userId: target.id,
+  await notifyUser(target.id, {
     type: 'friend',
     title: `${me.name} veut t’ajouter`,
     href: '/amis',
+    body: 'Ouvre Amis pour accepter.',
   })
   return listFriends()
 }
@@ -149,11 +164,11 @@ export async function acceptFriend(friendshipId: string) {
     throw new ApiError(404, 'Demande introuvable')
   }
   await db.update(friendships).set({ status: 'accepted' }).where(eq(friendships.id, row.id))
-  await db.insert(notifications).values({
-    userId: row.requesterId,
+  await notifyUser(row.requesterId, {
     type: 'friend',
     title: `${me.name} a accepté`,
     href: '/amis',
+    body: 'Vous êtes amis. Comparez vos stats.',
   })
   await db
     .delete(notifications)
@@ -213,11 +228,11 @@ export async function inviteFriend(code: string, friendUserId: string) {
     toUserId: friendUserId,
     status: 'pending',
   })
-  await db.insert(notifications).values({
-    userId: friendUserId,
+  await notifyUser(friendUserId, {
     type: 'invite',
     title: `${me.name} t’invite · ${session.code}`,
     href: `/session/${session.code}`,
+    body: 'Tape pour rejoindre la session.',
   })
   return { ok: true }
 }

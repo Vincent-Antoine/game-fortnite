@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { CareerGrid } from '@/components/career-grid'
+import { PushToggle } from '@/components/push-toggle'
 
 type Stats = {
   me: { name: string; friendCode: string; email: string }
@@ -82,6 +83,7 @@ export default function ProfilPage() {
       <p className="font-hud tracking-[0.25em] text-gold">ID {stats.me.friendCode}</p>
       <p className="text-sm text-mute">Donne cet ID à tes potes pour t’ajouter. Tes kills et réas restent sur ce profil.</p>
       {error ? <p className="rounded-2xl bg-kill/15 px-4 py-3 text-sm text-kill">{error}</p> : null}
+      <PushToggle />
       <CareerGrid stats={stats} />
       <Link href="/classement" className="text-sm text-horizon underline">
         Voir le classement
