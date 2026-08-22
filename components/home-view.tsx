@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { AvatarPicker } from '@/components/avatar'
 import { PhotoPicker } from '@/components/photo-picker'
 import { parseStakeToCents } from '@/lib/money'
+import { BusyLabel } from '@/components/spinner'
 
 type Mode = 'create' | 'join'
 
@@ -156,7 +157,9 @@ export function HomeView() {
           disabled={pending}
           className="mt-2 rounded-full bg-horizon py-4 text-lg font-semibold text-dusk disabled:opacity-60"
         >
-          {pending ? '…' : mode === 'create' ? 'Ouvrir la session' : 'Entrer dans la session'}
+          <BusyLabel busy={pending}>
+            {mode === 'create' ? 'Ouvrir la session' : 'Entrer dans la session'}
+          </BusyLabel>
         </button>
       </form>
     </main>

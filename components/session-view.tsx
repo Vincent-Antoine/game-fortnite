@@ -9,6 +9,7 @@ import { isPlayerLive } from '@/lib/presence'
 import { modifiedPoints, sessionPoints, type PowerKind, type PowerUse } from '@/lib/scoring'
 import { mergeSessionDto } from '@/lib/session-sync'
 import type { SessionDTO } from '@/lib/types'
+import { BusyLabel, Spinner } from '@/components/spinner'
 
 type Props = { code: string }
 
@@ -23,12 +24,12 @@ export function SessionView({ code }: Props) {
   const [joinAvatar, setJoinAvatar] = useState('drop')
   const [joinPhoto, setJoinPhoto] = useState<string | null>(null)
   const [pending, setPending] = useState('')
+  const [savingPlayers, setSavingPlayers] = useState<Record<string, boolean>>({})
   const [newName, setNewName] = useState('')
   const [newAvatar, setNewAvatar] = useState('drop')
   const [newPhoto, setNewPhoto] = useState<string | null>(null)
   const [friends, setFriends] = useState<{ user: { id: string; name: string }; status: string }[]>([])
   const skipPoll = useRef(0)
-  const saveTimer = useRef(0)
   const scoreTimers = useRef(new Map<string, number>())
   const editingPlayers = useRef(new Set<string>())
   const pendingScores = useRef(new Set<string>())
@@ -181,22 +182,13 @@ export function SessionView({ code }: Props) {
     }
   }
 
-  function scheduleSave(next: SessionDTO) {
-    setSession(next)
-    skipPoll.current = Date.now() + 2000
-    window.clearTimeout(saveTimer.current)
-    saveTimer.current = window.setTimeout(() => {
-      const game = sessionRef.current?.games.find((row) => row.status === 'open')
-      if (!game) {
-        return
+  function setSaving(playerId: string, value: boolean) {
+    setSavingPlayers((current) => {
+      if (Boolean(current[playerId]) === value) {
+        return current
       }
-      void mutate(`/api/sessions/${code}/games/${game.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          firstKillPlayerId: game.firstKillPlayerId,
-        }),
-      }).catch((err: Error) => setError(err.message))
-    }, 280) as unknown as number
+      return { ...current, [playerId]: value }
+    })
   }
 
   function patchLocalScore(playerId: string, field: 'kills' | 'revives', value: number) {
@@ -230,12 +222,14 @@ export function SessionView({ code }: Props) {
     const seq = (scoreSeq.current.get(playerId) ?? 0) + 1
     scoreSeq.current.set(playerId, seq)
     pendingScores.current.add(playerId)
+    setSaving(playerId, true)
     skipPoll.current = Date.now() + 2500
     void enqueue(async () => {
       const game = sessionRef.current?.games.find((row) => row.status === 'open')
       const saved = game?.scores.find((row) => row.playerId === playerId)
       if (!game || !saved) {
         pendingScores.current.delete(playerId)
+        setSaving(playerId, false)
         return
       }
       try {
@@ -250,11 +244,13 @@ export function SessionView({ code }: Props) {
         }
         if (scoreSeq.current.get(playerId) === seq) {
           pendingScores.current.delete(playerId)
+          setSaving(playerId, false)
         }
         applyRemote(data)
       } catch (err) {
         if (scoreSeq.current.get(playerId) === seq) {
           pendingScores.current.delete(playerId)
+          setSaving(playerId, false)
         }
         setError(err instanceof Error ? err.message : 'Erreur')
       }
@@ -268,6 +264,7 @@ export function SessionView({ code }: Props) {
       return
     }
     pendingScores.current.add(playerId)
+    setSaving(playerId, true)
     skipPoll.current = Date.now() + 2500
     const previous = scoreTimers.current.get(playerId)
     if (previous) {
@@ -310,12 +307,18 @@ export function SessionView({ code }: Props) {
       return
     }
     const firstKillPlayerId = openGame.firstKillPlayerId === playerId ? null : playerId
-    scheduleSave({
+    setSession({
       ...session,
       games: session.games.map((game) =>
         game.id === openGame.id ? { ...game, firstKillPlayerId } : game,
       ),
     })
+    void run('fk', () =>
+      mutate(`/api/sessions/${code}/games/${openGame.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ firstKillPlayerId }),
+      }),
+    )
   }
 
   async function copyCode() {
@@ -408,7 +411,7 @@ export function SessionView({ code }: Props) {
                 })
               }
             >
-              Rejoindre avec {meUser.name}
+              <BusyLabel busy={pending === 'join'}>Rejoindre avec {meUser.name}</BusyLabel>
             </button>
           ) : (
             <form
@@ -437,7 +440,9 @@ export function SessionView({ code }: Props) {
                 placeholder="Ton pseudo"
                 className="rounded-full bg-dusk px-4 py-3 text-ink outline-none"
               />
-              <button className="rounded-full bg-dusk py-3 font-semibold text-ink">Rejoindre</button>
+              <button disabled={pending !== ''} className="rounded-full bg-dusk py-3 font-semibold text-ink disabled:opacity-60">
+                <BusyLabel busy={pending === 'join'}>Rejoindre</BusyLabel>
+              </button>
             </form>
           )}
         </section>
@@ -469,6 +474,7 @@ export function SessionView({ code }: Props) {
                     others={session.players.filter((player) => player.id !== you.id)}
                     selected={openGame.powers.find((power) => power.playerId === you.id) ?? null}
                     disabled={pending !== ''}
+                    busy={pending === 'power'}
                     onPick={(kind, targetPlayerId) =>
                       void run('power', () =>
                         mutate(`/api/sessions/${code}/games/${openGame.id}/powers`, {
@@ -491,7 +497,8 @@ export function SessionView({ code }: Props) {
               ) : null}
               <button
                 type="button"
-                className="mt-4 w-full rounded-full bg-gold py-3 font-semibold text-dusk"
+                className="mt-4 w-full rounded-full bg-gold py-3 font-semibold text-dusk disabled:opacity-60"
+                disabled={pending !== ''}
                 onClick={() =>
                   void run('lock', () => {
                     flushPendingScores()
@@ -499,7 +506,7 @@ export function SessionView({ code }: Props) {
                   })
                 }
               >
-                Verrouiller et jouer
+                <BusyLabel busy={pending === 'lock'}>Verrouiller et jouer</BusyLabel>
               </button>
             </div>
           ) : (
@@ -551,6 +558,7 @@ export function SessionView({ code }: Props) {
                       onCommit={(raw) => commitScore(player.id, 'kills', raw)}
                       onFlush={(raw) => commitScore(player.id, 'kills', raw, true)}
                       onNudge={(delta) => nudgeScore(player.id, 'kills', delta)}
+                      busy={Boolean(savingPlayers[player.id])}
                     />
                     <ScoreField
                       label="Réas"
@@ -564,14 +572,18 @@ export function SessionView({ code }: Props) {
                       onCommit={(raw) => commitScore(player.id, 'revives', raw)}
                       onFlush={(raw) => commitScore(player.id, 'revives', raw, true)}
                       onNudge={(delta) => nudgeScore(player.id, 'revives', delta)}
+                      busy={Boolean(savingPlayers[player.id])}
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => setFirstKill(player.id)}
-                    className={`mt-3 w-full rounded-full py-2 font-hud text-xs tracking-[0.2em] ${isFirst ? 'bg-gold text-dusk' : 'bg-dusk text-mute'}`}
+                    disabled={pending !== ''}
+                    className={`mt-3 w-full rounded-full py-2 font-hud text-xs tracking-[0.2em] disabled:opacity-60 ${isFirst ? 'bg-gold text-dusk' : 'bg-dusk text-mute'}`}
                   >
-                    {isFirst ? 'FIRST KILL' : 'MARQUER FIRST KILL'}
+                    <BusyLabel busy={pending === 'fk'}>
+                      {isFirst ? 'FIRST KILL' : 'MARQUER FIRST KILL'}
+                    </BusyLabel>
                   </button>
                   {mine && !confirmed ? (
                     <button
@@ -585,7 +597,7 @@ export function SessionView({ code }: Props) {
                       }
                       className="mt-3 w-full rounded-full bg-rez py-3 font-semibold text-dusk disabled:opacity-50"
                     >
-                      {pending === 'confirm' ? '…' : 'Confirmer mes scores'}
+                      <BusyLabel busy={pending === 'confirm'}>Confirmer mes scores</BusyLabel>
                     </button>
                   ) : mine && confirmed ? (
                     <button
@@ -598,7 +610,7 @@ export function SessionView({ code }: Props) {
                       }
                       className="mt-3 w-full text-sm text-mute underline disabled:opacity-50"
                     >
-                      {pending === 'unconfirm' ? '…' : 'Modifier mes scores'}
+                      <BusyLabel busy={pending === 'unconfirm'}>Modifier mes scores</BusyLabel>
                     </button>
                   ) : (
                     <p className={`mt-3 text-center font-hud text-xs tracking-[0.2em] ${confirmed ? 'text-rez' : 'text-mute'}`}>
@@ -608,6 +620,7 @@ export function SessionView({ code }: Props) {
                   {youAreHost && session.status === 'open' ? (
                     <HostPlayerActions
                       name={player.name}
+                      busy={pending === 'rename' || pending === 'kick'}
                       canKick={!player.isHost && player.id !== session.youPlayerId}
                       onRename={(name) =>
                         void run('rename', () =>
@@ -636,14 +649,16 @@ export function SessionView({ code }: Props) {
             }
             className="rounded-full bg-horizon py-4 text-lg font-semibold text-dusk disabled:opacity-50"
           >
-            {pending === 'close-game'
-              ? 'Calcul…'
-              : !allScoresConfirmed(openGame.scores)
-                ? `Encore ${session.players
-                    .filter((player) => !openGame.scores.find((row) => row.playerId === player.id)?.confirmedAt)
-                    .map((player) => player.name)
-                    .join(', ')}`
-                : 'Clôturer la game'}
+            <BusyLabel busy={pending === 'close-game'}>
+              {pending === 'close-game'
+                ? 'Calcul'
+                : !allScoresConfirmed(openGame.scores)
+                  ? `Encore ${session.players
+                      .filter((player) => !openGame.scores.find((row) => row.playerId === player.id)?.confirmedAt)
+                      .map((player) => player.name)
+                      .join(', ')}`
+                  : 'Clôturer la game'}
+            </BusyLabel>
           </button>
         </section>
       ) : session.status === 'open' ? (
@@ -652,7 +667,9 @@ export function SessionView({ code }: Props) {
           onClick={() => void run('new-game', () => mutate(`/api/sessions/${code}/games`, { method: 'POST' }))}
           className="rounded-full bg-horizon py-4 text-lg font-semibold text-dusk disabled:opacity-50"
         >
-          {pending === 'new-game' ? '…' : session.players.length < 2 ? 'Ajoute un 2e joueur' : 'Ouvrir une game'}
+          <BusyLabel busy={pending === 'new-game'}>
+            {session.players.length < 2 ? 'Ajoute un 2e joueur' : 'Ouvrir une game'}
+          </BusyLabel>
         </button>
       ) : null}
 
@@ -764,7 +781,8 @@ export function SessionView({ code }: Props) {
               <button
                 key={row.user.id}
                 type="button"
-                className="rounded-full bg-dusk px-3 py-2 text-sm"
+                className="rounded-full bg-dusk px-3 py-2 text-sm disabled:opacity-60"
+                disabled={pending !== ''}
                 onClick={() =>
                   void run('invite', async () => {
                     const response = await fetch(`/api/sessions/${code}/invite`, {
@@ -780,7 +798,7 @@ export function SessionView({ code }: Props) {
                   })
                 }
               >
-                {row.user.name}
+                <BusyLabel busy={pending === 'invite'}>{row.user.name}</BusyLabel>
               </button>
             ))}
           </div>
@@ -797,6 +815,7 @@ export function SessionView({ code }: Props) {
               </p>
               <HostPlayerActions
                 name={player.name}
+                busy={pending === 'rename' || pending === 'kick'}
                 canKick={!player.isHost && player.id !== session.youPlayerId}
                 onRename={(name) =>
                   void run('rename', () =>
@@ -841,7 +860,9 @@ export function SessionView({ code }: Props) {
               maxLength={20}
               className="flex-1 rounded-full border border-white/10 bg-dusk px-4 py-3 outline-none"
             />
-            <button className="rounded-full bg-horizon px-4 font-semibold text-dusk">OK</button>
+            <button disabled={pending !== ''} className="rounded-full bg-horizon px-4 font-semibold text-dusk disabled:opacity-60">
+              <BusyLabel busy={pending === 'add'}>OK</BusyLabel>
+            </button>
           </div>
         </form>
       ) : null}
@@ -856,7 +877,7 @@ export function SessionView({ code }: Props) {
           }}
           className="text-sm text-mute underline disabled:opacity-40"
         >
-          Clôturer la session
+          <BusyLabel busy={pending === 'close-session'}>Clôturer la session</BusyLabel>
         </button>
       ) : (
         <p className="text-center text-sm text-mute">Soirée close. Le ticket reste valable.</p>
@@ -906,12 +927,14 @@ function PowerPicker({
   others,
   selected,
   disabled,
+  busy,
   onPick,
 }: {
   you: PlayerRef
   others: PlayerRef[]
   selected: PowerUse | null
   disabled: boolean
+  busy: boolean
   onPick: (kind: PowerKind, targetPlayerId?: string | null) => void
 }) {
   function chip(active: boolean, used: boolean) {
@@ -931,16 +954,17 @@ function PowerPicker({
         type="button"
         disabled={disabled || you.usedPowers.double}
         onClick={() => onPick('double')}
-        className={chip(selected?.kind === 'double', you.usedPowers.double)}
+        className={`${chip(selected?.kind === 'double', you.usedPowers.double)} inline-flex items-center gap-1`}
       >
-        x2
+        {busy ? <Spinner className="h-3 w-3" /> : 'x2'}
       </button>
       <button
         type="button"
         disabled={disabled || you.usedPowers.shield}
         onClick={() => onPick('shield')}
-        className={chip(selected?.kind === 'shield', you.usedPowers.shield)}
+        className={`${chip(selected?.kind === 'shield', you.usedPowers.shield)} inline-flex items-center gap-1`}
       >
+        {busy ? <Spinner className="h-3 w-3" /> : null}
         Bouclier
       </button>
       {others.map((target) => (
@@ -949,8 +973,9 @@ function PowerPicker({
           type="button"
           disabled={disabled || you.usedPowers.halve}
           onClick={() => onPick('halve', target.id)}
-          className={chip(selected?.kind === 'halve' && selected.targetPlayerId === target.id, you.usedPowers.halve)}
+          className={`${chip(selected?.kind === 'halve' && selected.targetPlayerId === target.id, you.usedPowers.halve)} inline-flex items-center gap-1`}
         >
+          {busy ? <Spinner className="h-3 w-3" /> : null}
           /2 {target.name}
         </button>
       ))}
@@ -1026,11 +1051,13 @@ function LiveAvatar({ player, size = 48 }: { player: PlayerRef; size?: number })
 function HostPlayerActions({
   name,
   canKick,
+  busy,
   onRename,
   onKick,
 }: {
   name: string
   canKick: boolean
+  busy?: boolean
   onRename: (name: string) => void
   onKick: () => void
 }) {
@@ -1046,7 +1073,7 @@ function HostPlayerActions({
           }
         }}
       >
-        Renommer
+        <BusyLabel busy={Boolean(busy)}>Renommer</BusyLabel>
       </button>
       {canKick ? (
         <button
@@ -1058,7 +1085,7 @@ function HostPlayerActions({
             }
           }}
         >
-          Retirer
+          <BusyLabel busy={Boolean(busy)}>Retirer</BusyLabel>
         </button>
       ) : null}
     </div>
@@ -1075,6 +1102,7 @@ function ScoreField({
   onCommit,
   onFlush,
   onNudge,
+  busy,
 }: {
   label: string
   value: number
@@ -1085,6 +1113,7 @@ function ScoreField({
   onCommit: (raw: string) => void
   onFlush: (raw: string) => void
   onNudge: (delta: number) => void
+  busy?: boolean
 }) {
   const [text, setText] = useState(String(value))
   const [focused, setFocused] = useState(false)
@@ -1096,7 +1125,10 @@ function ScoreField({
   const color = accent === 'kill' ? 'text-kill' : 'text-rez'
   return (
     <label className={`rounded-2xl bg-dusk px-3 py-3 ${disabled ? 'opacity-50' : ''}`}>
-      <p className={`font-hud text-[10px] tracking-[0.2em] ${color}`}>{label.toUpperCase()}</p>
+      <p className={`flex items-center gap-1.5 font-hud text-[10px] tracking-[0.2em] ${color}`}>
+        {label.toUpperCase()}
+        {busy ? <Spinner className="h-3 w-3" /> : null}
+      </p>
       <div className="mt-1 flex items-center gap-1">
         <button
           type="button"
@@ -1205,7 +1237,7 @@ function PingBar({
           disabled={disabled || !draft.trim()}
           className="rounded-full bg-horizon px-4 text-sm font-semibold text-dusk disabled:opacity-50"
         >
-          {sending ? '…' : 'Ping'}
+          <BusyLabel busy={sending}>Ping</BusyLabel>
         </button>
       </form>
       {pings.length === 0 ? (
