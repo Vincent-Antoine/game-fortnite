@@ -15,7 +15,9 @@ export async function PATCH(
     const dto = await updateOpenGame({
       code,
       gameId,
-      firstKillPlayerId: body.firstKillPlayerId ?? null,
+      ...(Object.prototype.hasOwnProperty.call(body, 'firstKillPlayerId')
+        ? { firstKillPlayerId: body.firstKillPlayerId ?? null }
+        : {}),
       scores: body.scores ?? [],
     })
     return NextResponse.json(await withYou(code, dto))

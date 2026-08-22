@@ -7,6 +7,7 @@ import { allScoresConfirmed, SESSION_PING_PRESETS } from '@/lib/chat'
 import { formatCents } from '@/lib/money'
 import { isPlayerLive } from '@/lib/presence'
 import { modifiedPoints, sessionPoints, type PowerKind, type PowerUse } from '@/lib/scoring'
+import { mergeSessionDto } from '@/lib/session-sync'
 import type { SessionDTO } from '@/lib/types'
 
 type Props = { code: string }
@@ -28,39 +29,37 @@ export function SessionView({ code }: Props) {
   const [friends, setFriends] = useState<{ user: { id: string; name: string }; status: string }[]>([])
   const skipPoll = useRef(0)
   const saveTimer = useRef(0)
-  const scoreTimer = useRef(0)
+  const scoreTimers = useRef(new Map<string, number>())
   const editingPlayers = useRef(new Set<string>())
+  const pendingScores = useRef(new Set<string>())
+  const scoreSeq = useRef(new Map<string, number>())
+  const writeQueue = useRef(Promise.resolve())
   const sessionRef = useRef<SessionDTO | null>(null)
   const scrolledToHistory = useRef(false)
   const [showRules, setShowRules] = useState(false)
   sessionRef.current = session
 
-  const mergeRemote = useCallback((remote: SessionDTO) => {
-    const local = sessionRef.current
-    const editing = editingPlayers.current
-    if (!local || editing.size === 0) {
-      return remote
-    }
-    const localOpen = local.games.find((game) => game.status === 'open')
-    const remoteOpen = remote.games.find((game) => game.status === 'open')
-    if (!localOpen || !remoteOpen) {
-      return remote
-    }
-    return {
-      ...remote,
-      games: remote.games.map((game) =>
-        game.id === remoteOpen.id
-          ? {
-              ...game,
-              scores: game.scores.map((row) =>
-                editing.has(row.playerId)
-                  ? (localOpen.scores.find((score) => score.playerId === row.playerId) ?? row)
-                  : row,
-              ),
-            }
-          : game,
-      ),
-    }
+  const heldPlayers = useCallback(() => new Set([...editingPlayers.current, ...pendingScores.current]), [])
+
+  const applyRemote = useCallback((remote: SessionDTO) => {
+    setSession(mergeSessionDto(sessionRef.current, remote, heldPlayers()))
+  }, [heldPlayers])
+
+  const enqueue = useCallback(<T,>(job: () => Promise<T>) => {
+    let result!: T
+    const next = writeQueue.current.then(
+      async () => {
+        result = await job()
+      },
+      async () => {
+        result = await job()
+      },
+    )
+    writeQueue.current = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    return next.then(() => result)
   }, [])
 
   const load = useCallback(async () => {
@@ -74,8 +73,8 @@ export function SessionView({ code }: Props) {
       return
     }
     setError('')
-    setSession(mergeRemote(data))
-  }, [code, mergeRemote])
+    applyRemote(data)
+  }, [applyRemote, code])
 
   useEffect(() => {
     void load()
@@ -156,17 +155,19 @@ export function SessionView({ code }: Props) {
 
   async function mutate(path: string, init?: RequestInit) {
     setError('')
-    const response = await fetch(path, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    return enqueue(async () => {
+      const response = await fetch(path, {
+        ...init,
+        headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Action impossible')
+      }
+      skipPoll.current = Date.now() + 800
+      applyRemote(data)
+      return data as SessionDTO
     })
-    const data = await response.json()
-    if (!response.ok) {
-      throw new Error(data.error ?? 'Action impossible')
-    }
-    skipPoll.current = Date.now() + 1200
-    setSession(data)
-    return data as SessionDTO
   }
 
   async function run(label: string, action: () => Promise<unknown>) {
@@ -182,10 +183,10 @@ export function SessionView({ code }: Props) {
 
   function scheduleSave(next: SessionDTO) {
     setSession(next)
-    skipPoll.current = Date.now() + 1500
+    skipPoll.current = Date.now() + 2000
     window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
-      const game = next.games.find((row) => row.status === 'open')
+      const game = sessionRef.current?.games.find((row) => row.status === 'open')
       if (!game) {
         return
       }
@@ -193,51 +194,115 @@ export function SessionView({ code }: Props) {
         method: 'PATCH',
         body: JSON.stringify({
           firstKillPlayerId: game.firstKillPlayerId,
-          scores: [],
         }),
       }).catch((err: Error) => setError(err.message))
     }, 280) as unknown as number
   }
 
-  function commitScore(playerId: string, field: 'kills' | 'revives', raw: string) {
-    if (!session || !openGame) {
-      return
+  function patchLocalScore(playerId: string, field: 'kills' | 'revives', value: number) {
+    const current = sessionRef.current
+    const game = current?.games.find((row) => row.status === 'open')
+    if (!current || !game) {
+      return null
     }
-    const parsed = Number.parseInt(raw, 10)
-    const value = Number.isFinite(parsed) ? Math.max(0, Math.min(99, parsed)) : 0
-    const current = openGame.scores.find((row) => row.playerId === playerId) ?? {
+    const existing = game.scores.find((row) => row.playerId === playerId) ?? {
       playerId,
       kills: 0,
       revives: 0,
       confirmedAt: null,
     }
-    if (current.confirmedAt) {
-      return
+    if (existing.confirmedAt) {
+      return null
     }
-    const nextScore = { ...current, [field]: value }
-    const scores = openGame.scores.map((row) => (row.playerId === playerId ? nextScore : row))
-    const hasRow = openGame.scores.some((row) => row.playerId === playerId)
-    const nextScores = hasRow ? scores : [...openGame.scores, nextScore]
-    setSession({
-      ...session,
-      games: session.games.map((game) => (game.id === openGame.id ? { ...game, scores: nextScores } : game)),
-    })
-    skipPoll.current = Date.now() + 1500
-    window.clearTimeout(scoreTimer.current)
-    scoreTimer.current = window.setTimeout(() => {
+    const nextScore = { ...existing, [field]: value }
+    const scores = game.scores.some((row) => row.playerId === playerId)
+      ? game.scores.map((row) => (row.playerId === playerId ? nextScore : row))
+      : [...game.scores, nextScore]
+    const next = {
+      ...current,
+      games: current.games.map((row) => (row.id === game.id ? { ...row, scores } : row)),
+    }
+    setSession(next)
+    return nextScore
+  }
+
+  function flushScore(playerId: string) {
+    const seq = (scoreSeq.current.get(playerId) ?? 0) + 1
+    scoreSeq.current.set(playerId, seq)
+    pendingScores.current.add(playerId)
+    skipPoll.current = Date.now() + 2500
+    void enqueue(async () => {
       const game = sessionRef.current?.games.find((row) => row.status === 'open')
-      if (!game) {
+      const saved = game?.scores.find((row) => row.playerId === playerId)
+      if (!game || !saved) {
+        pendingScores.current.delete(playerId)
         return
       }
-      const saved = game.scores.find((row) => row.playerId === playerId) ?? nextScore
-      void mutate(`/api/sessions/${code}/games/${game.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          firstKillPlayerId: game.firstKillPlayerId,
-          scores: [saved],
-        }),
-      }).catch((err: Error) => setError(err.message))
-    }, 280) as unknown as number
+      try {
+        const response = await fetch(`/api/sessions/${code}/games/${game.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scores: [saved] }),
+        })
+        const data = await response.json()
+        if (!response.ok) {
+          throw new Error(data.error ?? 'Score impossible')
+        }
+        if (scoreSeq.current.get(playerId) === seq) {
+          pendingScores.current.delete(playerId)
+        }
+        applyRemote(data)
+      } catch (err) {
+        if (scoreSeq.current.get(playerId) === seq) {
+          pendingScores.current.delete(playerId)
+        }
+        setError(err instanceof Error ? err.message : 'Erreur')
+      }
+    })
+  }
+
+  function commitScore(playerId: string, field: 'kills' | 'revives', raw: string, immediate = false) {
+    const parsed = Number.parseInt(raw, 10)
+    const value = Number.isFinite(parsed) ? Math.max(0, Math.min(99, parsed)) : 0
+    if (!patchLocalScore(playerId, field, value)) {
+      return
+    }
+    pendingScores.current.add(playerId)
+    skipPoll.current = Date.now() + 2500
+    const previous = scoreTimers.current.get(playerId)
+    if (previous) {
+      window.clearTimeout(previous)
+    }
+    if (immediate) {
+      flushScore(playerId)
+      return
+    }
+    scoreTimers.current.set(
+      playerId,
+      window.setTimeout(() => flushScore(playerId), 450) as unknown as number,
+    )
+  }
+
+  function nudgeScore(playerId: string, field: 'kills' | 'revives', delta: number) {
+    const game = sessionRef.current?.games.find((row) => row.status === 'open')
+    const current = game?.scores.find((row) => row.playerId === playerId)
+    if (!game || current?.confirmedAt) {
+      return
+    }
+    const next = Math.max(0, Math.min(99, (current?.[field] ?? 0) + delta))
+    commitScore(playerId, field, String(next), true)
+  }
+
+  function flushPendingScores() {
+    const ids = new Set([...pendingScores.current, ...scoreTimers.current.keys()])
+    for (const playerId of ids) {
+      const timer = scoreTimers.current.get(playerId)
+      if (timer) {
+        window.clearTimeout(timer)
+        scoreTimers.current.delete(playerId)
+      }
+      flushScore(playerId)
+    }
   }
 
   function setFirstKill(playerId: string) {
@@ -427,7 +492,12 @@ export function SessionView({ code }: Props) {
               <button
                 type="button"
                 className="mt-4 w-full rounded-full bg-gold py-3 font-semibold text-dusk"
-                onClick={() => void run('lock', () => mutate(`/api/sessions/${code}/games/${openGame.id}/powers/lock`, { method: 'POST' }))}
+                onClick={() =>
+                  void run('lock', () => {
+                    flushPendingScores()
+                    return mutate(`/api/sessions/${code}/games/${openGame.id}/powers/lock`, { method: 'POST' })
+                  })
+                }
               >
                 Verrouiller et jouer
               </button>
@@ -444,7 +514,7 @@ export function SessionView({ code }: Props) {
               revives: 0,
               confirmedAt: null,
             }
-            const points = score.kills + score.revives
+            const points = modifiedPoints(openGame.scores, openGame.powers).get(player.id) ?? score.kills + score.revives
             const isFirst = openGame.firstKillPlayerId === player.id
             const mine = session.youPlayerId === player.id
             const confirmed = Boolean(score.confirmedAt)
@@ -475,8 +545,12 @@ export function SessionView({ code }: Props) {
                       accent="kill"
                       disabled={confirmed}
                       onFocus={() => editingPlayers.current.add(player.id)}
-                      onBlur={() => editingPlayers.current.delete(player.id)}
+                      onBlur={() => {
+                        editingPlayers.current.delete(player.id)
+                      }}
                       onCommit={(raw) => commitScore(player.id, 'kills', raw)}
+                      onFlush={(raw) => commitScore(player.id, 'kills', raw, true)}
+                      onNudge={(delta) => nudgeScore(player.id, 'kills', delta)}
                     />
                     <ScoreField
                       label="Réas"
@@ -484,8 +558,12 @@ export function SessionView({ code }: Props) {
                       accent="rez"
                       disabled={confirmed}
                       onFocus={() => editingPlayers.current.add(player.id)}
-                      onBlur={() => editingPlayers.current.delete(player.id)}
+                      onBlur={() => {
+                        editingPlayers.current.delete(player.id)
+                      }}
                       onCommit={(raw) => commitScore(player.id, 'revives', raw)}
+                      onFlush={(raw) => commitScore(player.id, 'revives', raw, true)}
+                      onNudge={(delta) => nudgeScore(player.id, 'revives', delta)}
                     />
                   </div>
                   <button
@@ -500,9 +578,10 @@ export function SessionView({ code }: Props) {
                       type="button"
                       disabled={pending !== ''}
                       onClick={() =>
-                        void run('confirm', () =>
-                          mutate(`/api/sessions/${code}/games/${openGame.id}/confirm`, { method: 'POST' }),
-                        )
+                        void run('confirm', () => {
+                          flushPendingScores()
+                          return mutate(`/api/sessions/${code}/games/${openGame.id}/confirm`, { method: 'POST' })
+                        })
                       }
                       className="mt-3 w-full rounded-full bg-rez py-3 font-semibold text-dusk disabled:opacity-50"
                     >
@@ -549,7 +628,12 @@ export function SessionView({ code }: Props) {
           })}
           <button
             disabled={pending !== '' || session.status !== 'open' || !allScoresConfirmed(openGame.scores)}
-            onClick={() => void run('close-game', () => mutate(`/api/sessions/${code}/games/${openGame.id}/close`, { method: 'POST' }))}
+            onClick={() =>
+              void run('close-game', () => {
+                flushPendingScores()
+                return mutate(`/api/sessions/${code}/games/${openGame.id}/close`, { method: 'POST' })
+              })
+            }
             className="rounded-full bg-horizon py-4 text-lg font-semibold text-dusk disabled:opacity-50"
           >
             {pending === 'close-game'
@@ -989,6 +1073,8 @@ function ScoreField({
   onFocus,
   onBlur,
   onCommit,
+  onFlush,
+  onNudge,
 }: {
   label: string
   value: number
@@ -997,6 +1083,8 @@ function ScoreField({
   onFocus: () => void
   onBlur: () => void
   onCommit: (raw: string) => void
+  onFlush: (raw: string) => void
+  onNudge: (delta: number) => void
 }) {
   const [text, setText] = useState(String(value))
   const [focused, setFocused] = useState(false)
@@ -1009,37 +1097,57 @@ function ScoreField({
   return (
     <label className={`rounded-2xl bg-dusk px-3 py-3 ${disabled ? 'opacity-50' : ''}`}>
       <p className={`font-hud text-[10px] tracking-[0.2em] ${color}`}>{label.toUpperCase()}</p>
-      <input
-        inputMode="numeric"
-        pattern="[0-9]*"
-        readOnly={disabled}
-        value={focused ? text : String(value)}
-        onFocus={() => {
-          if (disabled) {
-            return
-          }
-          setFocused(true)
-          setText(String(value))
-          onFocus()
-        }}
-        onBlur={() => {
-          if (disabled) {
-            return
-          }
-          setFocused(false)
-          onCommit(text)
-          onBlur()
-        }}
-        onChange={(event) => {
-          if (disabled) {
-            return
-          }
-          const next = event.target.value.replace(/\D/g, '').slice(0, 2)
-          setText(next)
-          onCommit(next === '' ? '0' : next)
-        }}
-        className="mt-1 w-full bg-transparent text-center font-display text-3xl outline-none"
-      />
+      <div className="mt-1 flex items-center gap-1">
+        <button
+          type="button"
+          disabled={disabled}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onNudge(-1)}
+          className="h-10 w-10 shrink-0 rounded-full bg-panel text-xl text-mute"
+        >
+          −
+        </button>
+        <input
+          inputMode="numeric"
+          pattern="[0-9]*"
+          readOnly={disabled}
+          value={focused ? text : String(value)}
+          onFocus={() => {
+            if (disabled) {
+              return
+            }
+            setFocused(true)
+            setText(String(value))
+            onFocus()
+          }}
+          onBlur={() => {
+            if (disabled) {
+              return
+            }
+            setFocused(false)
+            onFlush(text === '' ? '0' : text)
+            onBlur()
+          }}
+          onChange={(event) => {
+            if (disabled) {
+              return
+            }
+            const next = event.target.value.replace(/\D/g, '').slice(0, 2)
+            setText(next)
+            onCommit(next === '' ? '0' : next)
+          }}
+          className="w-full bg-transparent text-center font-display text-3xl outline-none"
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onNudge(1)}
+          className="h-10 w-10 shrink-0 rounded-full bg-panel text-xl text-mute"
+        >
+          +
+        </button>
+      </div>
     </label>
   )
 }

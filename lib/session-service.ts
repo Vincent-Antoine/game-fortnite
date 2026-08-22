@@ -250,7 +250,7 @@ export async function createGame(code: string): Promise<SessionDTO> {
 export async function updateOpenGame(input: {
   code: string
   gameId: string
-  firstKillPlayerId: string | null
+  firstKillPlayerId?: string | null
   scores: { playerId: string; kills: number; revives: number }[]
 }): Promise<SessionDTO> {
   const db = getDb()
@@ -263,14 +263,15 @@ export async function updateOpenGame(input: {
   const roster = await db.select().from(players).where(eq(players.sessionId, session.id))
   const rosterIds = new Set(roster.map((player) => player.id))
 
-  if (input.firstKillPlayerId && !rosterIds.has(input.firstKillPlayerId)) {
-    throw new ApiError(400, 'First kill invalide')
+  if (input.firstKillPlayerId !== undefined) {
+    if (input.firstKillPlayerId && !rosterIds.has(input.firstKillPlayerId)) {
+      throw new ApiError(400, 'First kill invalide')
+    }
+    await db
+      .update(games)
+      .set({ firstKillPlayerId: input.firstKillPlayerId })
+      .where(eq(games.id, game.id))
   }
-
-  await db
-    .update(games)
-    .set({ firstKillPlayerId: input.firstKillPlayerId })
-    .where(eq(games.id, game.id))
 
   for (const row of input.scores) {
     if (!rosterIds.has(row.playerId)) {

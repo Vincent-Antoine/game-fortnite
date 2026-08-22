@@ -1,4 +1,18 @@
 import { formatCents } from './money'
+import { modifiedPoints, type PlayerScore, type PowerUse } from './scoring'
+
+export function careerGamePoints(
+  scores: PlayerScore[],
+  powers: PowerUse[],
+  playerIds: Set<string>,
+): Record<string, number> {
+  const modified = modifiedPoints(scores, powers)
+  const result: Record<string, number> = {}
+  for (const playerId of playerIds) {
+    result[playerId] = modified.get(playerId) ?? 0
+  }
+  return result
+}
 
 export type Career = {
   userId: string

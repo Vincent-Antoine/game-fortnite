@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyCareer, personalRecords, sortCareers } from './career'
+import { careerGamePoints, emptyCareer, personalRecords, sortCareers } from './career'
 
 describe('sortCareers', () => {
   const brandon = { ...emptyCareer({ id: '1', name: 'Brandon', friendCode: 'AAAAAA' }), points: 12, kills: 8 }
@@ -19,6 +19,24 @@ describe('sortCareers', () => {
   it('peut classer par kills', () => {
     const rows = sortCareers([brandon, dany, vince], 'kills')
     expect(rows.map((row) => row.name)).toEqual(['Dany', 'Brandon', 'Vince'])
+  })
+})
+
+describe('careerGamePoints', () => {
+  it('applique x2 et /2 comme le tableau de session', () => {
+    expect(
+      careerGamePoints(
+        [
+          { playerId: 'brandon', kills: 1, revives: 0 },
+          { playerId: 'dany', kills: 6, revives: 0 },
+        ],
+        [
+          { playerId: 'brandon', kind: 'double', targetPlayerId: null },
+          { playerId: 'brandon', kind: 'halve', targetPlayerId: 'dany' },
+        ],
+        new Set(['brandon', 'dany']),
+      ),
+    ).toEqual({ brandon: 2, dany: 3 })
   })
 })
 

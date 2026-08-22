@@ -19,7 +19,8 @@ import {
 } from '@/lib/db/schema'
 import { isTyping, sanitizeMessage } from '@/lib/chat'
 import { sanitizePhoto } from '@/lib/photo'
-import { emptyCareer, personalRecords, sortCareers, withMoneyLabels, type Career, type GameRecord } from '@/lib/career'
+import { careerGamePoints, emptyCareer, personalRecords, sortCareers, withMoneyLabels, type Career, type GameRecord } from '@/lib/career'
+import type { PowerKind, PowerUse } from '@/lib/scoring'
 import { notifyUser } from '@/lib/notify'
 import { seasonWindow, type SeasonRange } from '@/lib/season'
 import { hashPassword, verifyPassword } from '@/lib/password'
@@ -625,6 +626,17 @@ async function careersForUsers(
   const gameById = new Map(closed.map((game) => [game.id, game]))
   const allScores = await db.select().from(scores).where(inArray(scores.gameId, gameIds))
   const allTransfers = await db.select().from(transfers).where(inArray(transfers.gameId, gameIds))
+  const allPowers = await db.select().from(gamePowers).where(inArray(gamePowers.gameId, gameIds))
+  const powersByGame = new Map<string, PowerUse[]>()
+  for (const power of allPowers) {
+    const list = powersByGame.get(power.gameId) ?? []
+    list.push({
+      playerId: power.playerId,
+      kind: power.kind as PowerKind,
+      targetPlayerId: power.targetPlayerId,
+    })
+    powersByGame.set(power.gameId, list)
+  }
   const gamesByUser = new Map<string, Set<string>>()
 
   for (const score of allScores) {
@@ -680,9 +692,11 @@ async function careersForUsers(
       if (!game) {
         continue
       }
-      const points = allScores
-        .filter((score) => score.gameId === gameId && mine.has(score.playerId))
-        .reduce((sum, score) => sum + score.kills + score.revives, 0)
+      const gameScores = allScores
+        .filter((score) => score.gameId === gameId)
+        .map((score) => ({ playerId: score.playerId, kills: score.kills, revives: score.revives }))
+      const modified = careerGamePoints(gameScores, powersByGame.get(gameId) ?? [], mine)
+      const points = [...mine].reduce((sum, playerId) => sum + (modified[playerId] ?? 0), 0)
       const lostCents = allTransfers
         .filter((transfer) => transfer.gameId === gameId && mine.has(transfer.fromPlayerId))
         .reduce((sum, transfer) => sum + transfer.amountCents, 0)
@@ -699,7 +713,7 @@ async function careersForUsers(
     const records = personalRecords(snapshots)
     row.games = played.size
     row.sessions = new Set(snapshots.map((item) => item.sessionId)).size
-    row.points = row.kills + row.revives
+    row.points = snapshots.reduce((sum, item) => sum + item.points, 0)
     row.netCents = row.wonCents - row.lostCents
     row.bestGame = records.bestGame
     row.winStreak = records.winStreak
